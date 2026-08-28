@@ -1,0 +1,65 @@
+{
+  "bot_info": {
+    "name": "FloryGuardBot",
+    "version": "2.0.0",
+    "developer_contact": "devilfade"
+  },
+  "hierarchy": {
+    "owner_ids": [
+      1398717669607473254
+    ],
+    "senior_admin_ids": [
+      1291370925303795733
+    ]
+  },
+  "authorized_guilds": {
+    "1480873879181459547": {
+      "name": "FloryMine Main",
+      "quarantine_role_id": 1542851471274414080,
+      "log_channel_id": null,
+      "automod_enabled": true,
+      "anti_nuke_enabled": true,
+      "anti_raid_enabled": true
+    },
+    "1391723885862588486": {
+      "name": "FloryMine Secondary",
+      "quarantine_role_id": 1542851846270492802,
+      "log_channel_id": null,
+      "automod_enabled": true,
+      "anti_nuke_enabled": true,
+      "anti_raid_enabled": true
+    }
+  },
+  "unauthorized_message": "Данный бот не подключен, просим отписать за подключением к devilfade",
+  "security": {
+    "max_warnings": 5,
+    "warn_expiry_days": 7,
+    "ban_immediate_demote": true,
+    "dm_user_on_warn": true
+  },
+  "automod": {
+    "block_links": true,
+    "block_invites": true,
+    "block_shorteners": true,
+    "block_scam_domains": true,
+    "anti_bypass_unicode": true,
+    "anti_zalgo": true,
+    "rate_limit_messages": 4,
+    "rate_limit_seconds": 3.0,
+    "duplicate_similarity_threshold": 0.85,
+    "max_mentions": 3
+  },
+  "anti_raid": {
+    "join_spike_threshold": 5,
+    "join_spike_window_seconds": 5,
+    "min_account_age_hours": 24,
+    "auto_lockdown_on_spike": true
+  },
+  "embed_colors": {
+    "primary": 5793266,
+    "success": 3066993,
+    "warning": 16753920,
+    "danger": 15158332,
+    "dark": 1907997
+  }
+}
