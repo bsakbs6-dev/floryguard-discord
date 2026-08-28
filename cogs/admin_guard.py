@@ -58,7 +58,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
             description=f"Пользователь {user.mention} (`{user.id}`) добавлен в доверенный список.\n📌 **Причина:** `{reason}`\n👑 **Добавил:** {interaction.user.mention}",
             color=COLOR_SUCCESS
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         await self.bot.send_security_log(interaction.guild, embed)
 
     @wl_group.command(name="remove", description="Удалить пользователя из WhiteList")
@@ -78,7 +78,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
                 description=f"Пользователь {user.mention} (`{user.id}`) удален из доверенного списка.\n👑 **Удалил:** {interaction.user.mention}",
                 color=COLOR_WARNING
             )
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             await self.bot.send_security_log(interaction.guild, embed)
         else:
             await interaction.response.send_message(f"❌ Пользователь {user.mention} не находился в WhiteList.", ephemeral=True)
@@ -129,7 +129,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
             description=f"Пользователь {user.mention} (`{user.id}`) назначен администратором безопасности.\nЕго действия не подлежат откату.",
             color=COLOR_SUCCESS
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         await self.bot.send_security_log(interaction.guild, embed)
 
     @admin_group.command(name="remove", description="Снять статус Администратора Безопасности")
@@ -149,7 +149,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
                 description=f"С пользователя {user.mention} снят статус администратора безопасности.",
                 color=COLOR_WARNING
             )
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             await self.bot.send_security_log(interaction.guild, embed)
         else:
             await interaction.response.send_message(f"❌ Пользователь {user.mention} не является администратором.", ephemeral=True)
@@ -329,7 +329,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
             ),
             color=COLOR_SUCCESS
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ==========================================
     # /ADDROLE & /REMOVEROLE (EXCLUSIVE TO OWNER & SENIOR ADMIN)
@@ -385,7 +385,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
                 ),
                 color=COLOR_SUCCESS
             )
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             await self.bot.send_security_log(guild, embed)
         except discord.Forbidden:
             await interaction.response.send_message("❌ Ошибка прав Discord: невозможно выдать роль из-за иерархии.", ephemeral=True)
@@ -443,7 +443,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
                 ),
                 color=COLOR_WARNING
             )
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             await self.bot.send_security_log(guild, embed)
         except discord.Forbidden:
             await interaction.response.send_message("❌ Ошибка прав Discord: невозможно снять роль из-за иерархии.", ephemeral=True)

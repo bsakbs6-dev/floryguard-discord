@@ -143,7 +143,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
             color = COLOR_WARNING
 
         embed = create_security_embed(title="⚠️ ВЫДАНО ПРЕДУПРЕЖДЕНИЕ", description=desc, color=color)
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         await self.bot.send_security_log(interaction.guild, embed)
 
     @warn_group.command(name="remove", description="Снять конкретное предупреждение по ID")
@@ -163,7 +163,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
                 description=f"Предупреждение **[ID: {warn_id}]** успешно аннулировано модератором {interaction.user.mention}.",
                 color=COLOR_SUCCESS
             )
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             await self.bot.send_security_log(interaction.guild, embed)
         else:
             await interaction.response.send_message(f"❌ Предупреждение с ID `{warn_id}` не найдено или уже неактивно.", ephemeral=True)
@@ -184,7 +184,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
             description=f"С пользователя {user.mention} снято **{cleared_count}** активных предупреждений.",
             color=COLOR_SUCCESS
         )
-        await interaction.response.send_message(embed=embed)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         await self.bot.send_security_log(interaction.guild, embed)
 
     @warn_group.command(name="list", description="Показать список всех активных предупреждений пользователя")
@@ -241,9 +241,9 @@ class ModerationCog(commands.Cog, name="Moderation"):
                     description=f"Канал {channel.mention} заблокирован для отправки сообщений.",
                     color=COLOR_DANGER
                 )
-                await interaction.response.send_message(embed=embed)
+                await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             count = 0
             for ch in guild.text_channels:
                 if ch.permissions_for(guild.me).manage_channels:
@@ -261,7 +261,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
                 description=f"Заблокировано текстовых каналов: **{count}**.\nОтправка сообщений для `@everyone` запрещена.",
                 color=COLOR_DANGER
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
     @app_commands.command(name="unlock", description="Снять блокировку с канала или сервера")
     @app_commands.describe(target="Область разблокировки")
@@ -288,9 +288,9 @@ class ModerationCog(commands.Cog, name="Moderation"):
                     description=f"Канал {channel.mention} снова доступен для общения.",
                     color=COLOR_SUCCESS
                 )
-                await interaction.response.send_message(embed=embed)
+                await interaction.response.send_message(embed=embed, ephemeral=True)
         else:
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             count = 0
             for ch in guild.text_channels:
                 if ch.permissions_for(guild.me).manage_channels:
@@ -308,7 +308,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
                 description=f"Разблокировано текстовых каналов: **{count}**.",
                 color=COLOR_SUCCESS
             )
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(embed=embed, ephemeral=True)
 
     # ==========================================
     # /PURGE COMMAND (FAST CHAT CLEANER)

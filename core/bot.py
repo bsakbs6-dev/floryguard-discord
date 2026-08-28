@@ -93,16 +93,14 @@ class FloryGuardBot(commands.Bot):
 
     def get_log_channel(self, guild: discord.Guild) -> Optional[discord.TextChannel]:
         """Find or determine the security log channel."""
-        cfg_channel_id = AUTHORIZED_GUILDS.get(guild.id, {}).get("log_channel_id")
-        if cfg_channel_id:
-            ch = guild.get_channel(cfg_channel_id)
-            if ch and isinstance(ch, discord.TextChannel):
-                return ch
-
-        # Search by common security log names
-        for ch in guild.text_channels:
-            if ch.name in ["security-logs", "audit-logs", "guard-logs", "floryguard-logs", "логи-безопасности", "logs"]:
-                return ch
+        if guild.id in AUTHORIZED_GUILDS:
+            cfg_channel_id = AUTHORIZED_GUILDS[guild.id].get("log_channel_id")
+            if cfg_channel_id:
+                ch = guild.get_channel(cfg_channel_id)
+                if ch and isinstance(ch, discord.TextChannel):
+                    return ch
+            # If log_channel_id is null / None, logs are completely disabled for this server
+            return None
         return None
 
     async def send_security_log(self, guild: discord.Guild, embed: discord.Embed):

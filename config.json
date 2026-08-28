@@ -20,7 +20,7 @@
   },
   "authorized_guilds": {
     "1480873879181459547": {
-      "name": "FloryMine Main",
+      "name": "ApexTime | Лучший сервер",
       "quarantine_role_id": 1542851471274414080,
       "log_channel_id": null,
       "automod_enabled": true,
@@ -28,9 +28,9 @@
       "anti_raid_enabled": true
     },
     "1391723885862588486": {
-      "name": "FloryMine Secondary",
+      "name": "⚡ FloryMine ⚡",
       "quarantine_role_id": 1542851846270492802,
-      "log_channel_id": null,
+      "log_channel_id": 1391723887846490224,
       "automod_enabled": true,
       "anti_nuke_enabled": true,
       "anti_raid_enabled": true
