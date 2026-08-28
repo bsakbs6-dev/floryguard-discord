@@ -2,7 +2,13 @@
   "bot_info": {
     "name": "FloryGuardBot",
     "version": "2.0.0",
-    "developer_contact": "devilfade"
+    "owner": "Devil_First_More",
+    "developer_discord": "devilfade",
+    "developer_telegram": "@FloryShopDev",
+    "community_links": {
+      "florymine": "https://dsc.gg/florymine",
+      "floryshop": "https://dsc.gg/floryshop"
+    }
   },
   "hierarchy": {
     "owner_ids": [

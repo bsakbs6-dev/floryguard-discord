@@ -159,5 +159,26 @@ docker compose up -d --build
 
 ---
 
-## 📄 Лицензия
-Private / Proprietary. Разработано для сообщества FloryMine.
+## 🌐 Сообщество и Проекты
+
+* 🏰 **Игровой проект FloryMine**: [dsc.gg/florymine](https://dsc.gg/florymine)
+* 🛒 **Официальный магазин FloryShop**: [dsc.gg/floryshop](https://dsc.gg/floryshop)
+
+---
+
+## 👨‍💻 Разработчик и Контакты
+
+* **Владелец и Lead Developer**: `Devil_First_More`
+* **Discord**: `devilfade`
+* **Telegram**: [@FloryShopDev](https://t.me/FloryShopDev)
+
+По вопросам технической поддержки, сотрудничества или подключения бота к вашему серверу обращайтесь по указанным контактам.
+
+---
+
+## 📄 Лицензия и Правообладание
+
+**Copyright (c) 2026 FloryMine & FloryShop Community. All rights reserved.**
+
+Данное программное обеспечение является интеллектуальной собственностью проекта **FloryMine** и его правообладателя **Devil_First_More**. 
+Несанкционированное копирование, распространение, модификация или коммерческое использование исходного кода без письменного согласия автора строго запрещено.
