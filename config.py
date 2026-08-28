@@ -9,7 +9,17 @@ load_dotenv(BASE_DIR / ".env")
 
 # Token and DB
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
-DATABASE_PATH = os.getenv("DATABASE_PATH", str(BASE_DIR / "database" / "floryguard.db"))
+
+# Persistent Data Directory (supports Docker/Bothost DATA_DIR volume)
+DATA_DIR_ENV = os.getenv("DATA_DIR")
+if DATA_DIR_ENV:
+    DATA_DIRECTORY = Path(DATA_DIR_ENV)
+else:
+    DATA_DIRECTORY = BASE_DIR / "database"
+
+DATA_DIRECTORY.mkdir(parents=True, exist_ok=True)
+DATABASE_PATH = os.getenv("DATABASE_PATH", str(DATA_DIRECTORY / "floryguard.db"))
+
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
 COMMAND_PREFIX = os.getenv("COMMAND_PREFIX", "!fg ")
 
