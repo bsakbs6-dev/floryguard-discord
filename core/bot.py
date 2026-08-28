@@ -70,8 +70,16 @@ class FloryGuardBot(commands.Bot):
             logger.info(f" - [{status}] {g.name} (ID: {g.id}) | Members: {g.member_count}")
         logger.info(f"==================================================")
 
-        # Sync application commands
+        # Sync application commands (Global + Direct Guild Sync for 0-second instant updates)
         try:
+            # 1. Sync to each authorized guild immediately
+            for g in self.guilds:
+                if g.id in AUTHORIZED_GUILDS:
+                    self.tree.copy_global_to(guild=g)
+                    synced_guild = await self.tree.sync(guild=g)
+                    logger.info(f"Instant synced {len(synced_guild)} Slash Commands to '{g.name}'")
+
+            # 2. Sync globally
             synced = await self.tree.sync()
             logger.info(f"Synced {len(synced)} Slash Commands globally.")
         except Exception as e:

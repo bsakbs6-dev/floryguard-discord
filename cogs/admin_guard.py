@@ -48,14 +48,14 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         if not await self._check_guild_auth(interaction):
             return
 
-        if not is_senior_admin(interaction.user.id):
-            await interaction.response.send_message("❌ Только **Высшие Администраторы и Владелец** могут управлять WhiteList.", ephemeral=True)
+        if not await is_admin(interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message("❌ Только **Администраторы и Владелец** могут управлять WhiteList.", ephemeral=True)
             return
 
         await db.add_whitelist(interaction.guild.id, user.id, interaction.user.id, reason)
         embed = create_security_embed(
             title="⭐ ПОЛЬЗОВАТЕЛЬ ДОБАВЛЕН В WHITELIST",
-            description=f"Пользователь {user.mention} (`{user.id}`) добавлен в доверенный список.\n📌 **Причина:** `{reason}`",
+            description=f"Пользователь {user.mention} (`{user.id}`) добавлен в доверенный список.\n📌 **Причина:** `{reason}`\n👑 **Добавил:** {interaction.user.mention}",
             color=COLOR_SUCCESS
         )
         await interaction.response.send_message(embed=embed)
@@ -67,15 +67,15 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         if not await self._check_guild_auth(interaction):
             return
 
-        if not is_senior_admin(interaction.user.id):
-            await interaction.response.send_message("❌ Только **Высшие Администраторы и Владелец** могут управлять WhiteList.", ephemeral=True)
+        if not await is_admin(interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message("❌ Только **Администраторы и Владелец** могут управлять WhiteList.", ephemeral=True)
             return
 
         removed = await db.remove_whitelist(interaction.guild.id, user.id)
         if removed:
             embed = create_security_embed(
                 title="⭐ ПОЛЬЗОВАТЕЛЬ УДАЛЕН ИЗ WHITELIST",
-                description=f"Пользователь {user.mention} (`{user.id}`) удален из доверенного списка.",
+                description=f"Пользователь {user.mention} (`{user.id}`) удален из доверенного списка.\n👑 **Удалил:** {interaction.user.mention}",
                 color=COLOR_WARNING
             )
             await interaction.response.send_message(embed=embed)
@@ -86,6 +86,10 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
     @wl_group.command(name="list", description="Показать всех участников WhiteList")
     async def wl_list(self, interaction: discord.Interaction):
         if not await self._check_guild_auth(interaction):
+            return
+
+        if not await is_admin(interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message("❌ Только **Администраторы и Владелец** могут просматривать WhiteList.", ephemeral=True)
             return
 
         wl_users = await db.get_whitelist(interaction.guild.id)
@@ -326,6 +330,125 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
             color=COLOR_SUCCESS
         )
         await interaction.followup.send(embed=embed)
+
+    # ==========================================
+    # /ADDROLE & /REMOVEROLE (EXCLUSIVE TO OWNER & SENIOR ADMIN)
+    # ==========================================
+    @app_commands.command(name="addrole", description="Выдать роль пользователю (Только Владелец и Высший Админ)")
+    @app_commands.describe(user="Пользователь, которому выдать роль", role="Роль для выдачи")
+    async def add_role_command(self, interaction: discord.Interaction, user: discord.Member, role: discord.Role):
+        if not await self._check_guild_auth(interaction):
+            return
+
+        # Check permission: Only Senior Admin & Bot Owner
+        if not is_senior_admin(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ Эта команда доступна **только Владельцу бота и Высшим Администраторам**.",
+                ephemeral=True
+            )
+            return
+
+        guild = interaction.guild
+        bot_member = guild.me
+
+        # Check bot permissions
+        if not bot_member.guild_permissions.manage_roles:
+            await interaction.response.send_message("❌ У бота нет права `Управлять ролями` (Manage Roles).", ephemeral=True)
+            return
+
+        # Check role hierarchy
+        if role >= bot_member.top_role:
+            await interaction.response.send_message(
+                f"❌ Роль {role.mention} находится **выше или на одном уровне** с ролью бота. "
+                "Поднимите роль бота выше в настройках сервера.",
+                ephemeral=True
+            )
+            return
+
+        if role.is_default() or role.managed:
+            await interaction.response.send_message("❌ Нельзя выдать системную или управляемую интеграцией роль.", ephemeral=True)
+            return
+
+        if role in user.roles:
+            await interaction.response.send_message(f"ℹ️ У пользователя {user.mention} уже есть роль {role.mention}.", ephemeral=True)
+            return
+
+        try:
+            await user.add_roles(role, reason=f"FloryGuard: /addrole от {interaction.user} (ID: {interaction.user.id})")
+            
+            embed = create_security_embed(
+                title="🎭 РОЛЬ УСПЕШНО ВЫДАНА",
+                description=(
+                    f"👤 **Пользователь:** {user.mention} (`{user.id}`)\n"
+                    f"🏷️ **Роль:** {role.mention} (`{role.name}`)\n"
+                    f"👑 **Исполнитель:** {interaction.user.mention}"
+                ),
+                color=COLOR_SUCCESS
+            )
+            await interaction.response.send_message(embed=embed)
+            await self.bot.send_security_log(guild, embed)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Ошибка прав Discord: невозможно выдать роль из-за иерархии.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Ошибка при выдаче роли: {e}", ephemeral=True)
+
+    @app_commands.command(name="removerole", description="Снять роль у пользователя (Только Владелец и Высший Админ)")
+    @app_commands.describe(user="Пользователь, у которого снять роль", role="Роль для снятия")
+    async def remove_role_command(self, interaction: discord.Interaction, user: discord.Member, role: discord.Role):
+        if not await self._check_guild_auth(interaction):
+            return
+
+        # Check permission: Only Senior Admin & Bot Owner
+        if not is_senior_admin(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ Эта команда доступна **только Владельцу бота и Высшим Администраторам**.",
+                ephemeral=True
+            )
+            return
+
+        guild = interaction.guild
+        bot_member = guild.me
+
+        # Check bot permissions
+        if not bot_member.guild_permissions.manage_roles:
+            await interaction.response.send_message("❌ У бота нет права `Управлять ролями` (Manage Roles).", ephemeral=True)
+            return
+
+        # Check role hierarchy
+        if role >= bot_member.top_role:
+            await interaction.response.send_message(
+                f"❌ Роль {role.mention} находится **выше или на одном уровне** с ролью бота. "
+                "Поднимите роль бота выше в настройках сервера.",
+                ephemeral=True
+            )
+            return
+
+        if role.is_default() or role.managed:
+            await interaction.response.send_message("❌ Нельзя снять системную или управляемую интеграцией роль.", ephemeral=True)
+            return
+
+        if role not in user.roles:
+            await interaction.response.send_message(f"ℹ️ У пользователя {user.mention} нет роли {role.mention}.", ephemeral=True)
+            return
+
+        try:
+            await user.remove_roles(role, reason=f"FloryGuard: /removerole от {interaction.user} (ID: {interaction.user.id})")
+            
+            embed = create_security_embed(
+                title="🎭 РОЛЬ УСПЕШНО СНЯТА",
+                description=(
+                    f"👤 **Пользователь:** {user.mention} (`{user.id}`)\n"
+                    f"🏷️ **Роль:** {role.mention} (`{role.name}`)\n"
+                    f"👑 **Исполнитель:** {interaction.user.mention}"
+                ),
+                color=COLOR_WARNING
+            )
+            await interaction.response.send_message(embed=embed)
+            await self.bot.send_security_log(guild, embed)
+        except discord.Forbidden:
+            await interaction.response.send_message("❌ Ошибка прав Discord: невозможно снять роль из-за иерархии.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Ошибка при снятии роли: {e}", ephemeral=True)
 
 
 async def setup(bot):

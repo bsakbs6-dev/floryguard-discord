@@ -102,9 +102,9 @@ class ModerationCog(commands.Cog, name="Moderation"):
         if not await self._check_guild_auth(interaction):
             return
 
-        # Permissions check: Only Senior Admin & Owner
-        if not is_senior_admin(interaction.user.id):
-            await interaction.response.send_message("❌ Только **Высшие Администраторы** могут выдавать предупреждения.", ephemeral=True)
+        # Permissions check: Admins & Senior Admins & Owner
+        if not await is_admin(interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message("❌ Только **Администраторы безопасности** могут выдавать предупреждения.", ephemeral=True)
             return
 
         if user.id == interaction.user.id:
@@ -114,6 +114,10 @@ class ModerationCog(commands.Cog, name="Moderation"):
         # Check target immunity
         if is_senior_admin(user.id):
             await interaction.response.send_message("❌ Невозможно выдать варн Высшему Администратору / Владельцу.", ephemeral=True)
+            return
+
+        if await is_admin(interaction.guild.id, user.id) and not is_senior_admin(interaction.user.id):
+            await interaction.response.send_message("❌ Только **Высшие Администраторы** могут выдавать варны другим администраторам.", ephemeral=True)
             return
 
         warn_id, warn_count, demoted = await self.bot.issue_warning_and_check(
@@ -148,8 +152,8 @@ class ModerationCog(commands.Cog, name="Moderation"):
         if not await self._check_guild_auth(interaction):
             return
 
-        if not is_senior_admin(interaction.user.id):
-            await interaction.response.send_message("❌ Только **Высшие Администраторы** могут снимать предупреждения.", ephemeral=True)
+        if not await is_admin(interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message("❌ Только **Администраторы безопасности** могут снимать предупреждения.", ephemeral=True)
             return
 
         success = await db.remove_warning(warn_id, interaction.guild.id)
@@ -170,8 +174,8 @@ class ModerationCog(commands.Cog, name="Moderation"):
         if not await self._check_guild_auth(interaction):
             return
 
-        if not is_senior_admin(interaction.user.id):
-            await interaction.response.send_message("❌ Только **Высшие Администраторы** могут очищать предупреждения.", ephemeral=True)
+        if not await is_admin(interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message("❌ Только **Администраторы безопасности** могут очищать предупреждения.", ephemeral=True)
             return
 
         cleared_count = await db.clear_warnings(interaction.guild.id, user.id)
@@ -187,6 +191,10 @@ class ModerationCog(commands.Cog, name="Moderation"):
     @app_commands.describe(user="Пользователь")
     async def warn_list(self, interaction: discord.Interaction, user: discord.Member):
         if not await self._check_guild_auth(interaction):
+            return
+
+        if not await is_admin(interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message("❌ Только **Администраторы безопасности** могут просматривать список варнов.", ephemeral=True)
             return
 
         warnings = await db.get_active_warnings(interaction.guild.id, user.id)
