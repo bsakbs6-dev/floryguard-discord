@@ -48,14 +48,14 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         if not await self._check_guild_auth(interaction):
             return
 
-        if not is_senior_admin(interaction.user.id):
-            await interaction.response.send_message("❌ Только **Высшие Администраторы и Владелец** могут управлять WhiteList.", ephemeral=True)
+        if not await is_admin(interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message("❌ Только **Администраторы и Владелец** могут управлять WhiteList.", ephemeral=True)
             return
 
         await db.add_whitelist(interaction.guild.id, user.id, interaction.user.id, reason)
         embed = create_security_embed(
             title="⭐ ПОЛЬЗОВАТЕЛЬ ДОБАВЛЕН В WHITELIST",
-            description=f"Пользователь {user.mention} (`{user.id}`) добавлен в доверенный список.\n📌 **Причина:** `{reason}`",
+            description=f"Пользователь {user.mention} (`{user.id}`) добавлен в доверенный список.\n📌 **Причина:** `{reason}`\n👑 **Добавил:** {interaction.user.mention}",
             color=COLOR_SUCCESS
         )
         await interaction.response.send_message(embed=embed)
@@ -67,15 +67,15 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         if not await self._check_guild_auth(interaction):
             return
 
-        if not is_senior_admin(interaction.user.id):
-            await interaction.response.send_message("❌ Только **Высшие Администраторы и Владелец** могут управлять WhiteList.", ephemeral=True)
+        if not await is_admin(interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message("❌ Только **Администраторы и Владелец** могут управлять WhiteList.", ephemeral=True)
             return
 
         removed = await db.remove_whitelist(interaction.guild.id, user.id)
         if removed:
             embed = create_security_embed(
                 title="⭐ ПОЛЬЗОВАТЕЛЬ УДАЛЕН ИЗ WHITELIST",
-                description=f"Пользователь {user.mention} (`{user.id}`) удален из доверенного списка.",
+                description=f"Пользователь {user.mention} (`{user.id}`) удален из доверенного списка.\n👑 **Удалил:** {interaction.user.mention}",
                 color=COLOR_WARNING
             )
             await interaction.response.send_message(embed=embed)
@@ -86,6 +86,10 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
     @wl_group.command(name="list", description="Показать всех участников WhiteList")
     async def wl_list(self, interaction: discord.Interaction):
         if not await self._check_guild_auth(interaction):
+            return
+
+        if not await is_admin(interaction.guild.id, interaction.user.id):
+            await interaction.response.send_message("❌ Только **Администраторы и Владелец** могут просматривать WhiteList.", ephemeral=True)
             return
 
         wl_users = await db.get_whitelist(interaction.guild.id)
