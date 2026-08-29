@@ -162,8 +162,15 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         admins = await db.get_admins(interaction.guild.id)
         lines = []
 
-        # List hardcoded senior admins / owners
-        lines.append("👑 **Владелец бота:** <@1398717669607473254>")
+        # List global bot owner
+        lines.append("👑 **Создатель/Владелец бота:** <@1398717669607473254>")
+
+        # List server specific owner if different from global owner
+        guild_owners = AUTHORIZED_GUILDS.get(interaction.guild.id, {}).get("owner_ids", [])
+        for o_id in guild_owners:
+            if o_id != 1398717669607473254:
+                lines.append(f"👑 **Владелец сервера:** <@{o_id}>")
+
         lines.append("💎 **Высший Администратор:** <@1291370925303795733>")
 
         guild_sr = AUTHORIZED_GUILDS.get(interaction.guild.id, {}).get("senior_admin_ids", [])
@@ -172,8 +179,12 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
 
         lines.append("\n🛡️ **Назначенные администраторы:**")
 
-        if admins:
-            for a in admins:
+        # Filter out owners and senior admins from DB appointed list
+        top_ids = {1398717669607473254, 1291370925303795733} | set(guild_owners) | set(guild_sr)
+        filtered_admins = [a for a in admins if a['user_id'] not in top_ids]
+
+        if filtered_admins:
+            for a in filtered_admins:
                 lines.append(f"• <@{a['user_id']}> (`ID: {a['user_id']}`)")
         else:
             lines.append("*Дополнительных администраторов нет.*")

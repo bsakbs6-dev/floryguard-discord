@@ -19,17 +19,30 @@ def get_guild_quarantine_role_id(guild: discord.Guild) -> Optional[int]:
     return None
 
 
-def is_bot_owner(user_id: int) -> bool:
-    """Checks if the user is a designated bot owner."""
-    return user_id in OWNER_IDS
+def is_bot_owner(user_id: int, guild_id: Optional[int] = None) -> bool:
+    """
+    Checks if the user is a designated bot owner globally (everywhere),
+    or a designated local server owner for the specific guild_id.
+    """
+    if user_id in OWNER_IDS:
+        return True
+    if guild_id and guild_id in AUTHORIZED_GUILDS:
+        guild_owners = set(AUTHORIZED_GUILDS[guild_id].get("owner_ids", []))
+        if user_id in guild_owners:
+            return True
+    return False
 
 
 def is_senior_admin(user_id: int, guild_id: Optional[int] = None) -> bool:
     """
-    Checks if the user is a designated senior administrator globally,
-    or specifically for the given guild_id.
+    Checks if the user is a designated senior administrator:
+    - Server Owner on the specific guild
+    - Global Senior Administrator (1291370925303795733)
+    - Server-specific Senior Administrator
     """
-    if is_bot_owner(user_id) or user_id in SENIOR_ADMIN_IDS:
+    if guild_id and is_bot_owner(user_id, guild_id):
+        return True
+    if user_id in SENIOR_ADMIN_IDS:
         return True
     if guild_id and guild_id in AUTHORIZED_GUILDS:
         guild_senior_admins = set(AUTHORIZED_GUILDS[guild_id].get("senior_admin_ids", []))

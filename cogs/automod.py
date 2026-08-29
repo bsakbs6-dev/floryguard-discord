@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import time
+import datetime
 
 from core.permissions import is_authorized_guild, is_whitelisted, is_admin
 from utils.logger import logger
@@ -38,34 +39,41 @@ class AutoModCog(commands.Cog, name="AutoMod"):
 
         content = message.content or ""
 
-        # 1. SCAN FOR PROHIBITED LINKS / INVITES / SCAM
+        # 1. SCAN FOR PROHIBITED LINKS / INVITES / SCAM / IPS
         is_malicious, threat_type, matched_snippet = scan_for_links(content)
         if is_malicious:
             try:
                 await message.delete()
-                logger.info(f"AutoMod blocked link ({threat_type}) from {author.name} in #{message.channel.name}")
+                logger.info(f"AutoMod blocked link/IP/ad ({threat_type}) from {author.name} in #{message.channel.name}")
             except Exception as e:
                 logger.error(f"Failed to delete malicious message: {e}")
 
-            # Send alert to security logs
+            # Send alert to security logs and apply 5-minute timeout
             if isinstance(author, discord.Member):
+                # Apply 5-minute timeout (mute)
+                try:
+                    mute_until = discord.utils.utcnow() + datetime.timedelta(minutes=5)
+                    await author.timeout(mute_until, reason=f"FloryGuard AutoMod: {threat_type} (Мут 5 минут)")
+                except Exception as e:
+                    logger.error(f"Failed to apply 5m timeout to {author.name}: {e}")
+
                 embed = automod_alert_embed(
                     member=author,
                     channel=message.channel,
                     threat_type=threat_type,
                     matched_content=content,
-                    action="Сообщение удалено (Фильтр ссылок)"
+                    action="🗑️ Сообщение удалено + 🔇 Тайм-аут (мут) на 5 минут"
                 )
                 await self.bot.send_security_log(guild, embed)
 
-                # Send direct warning
+                # Send direct notification
                 try:
                     warn_emb = create_security_embed(
-                        title="🛑 ССЫЛКА ЗАБЛОКИРОВАНА",
+                        title="🔇 ВЫ ПОЛУЧИЛИ МУТ НА 5 МИНУТ",
                         description=(
-                            f"Ваше сообщение в канале {message.channel.mention} было удалено.\n\n"
+                            f"Ваше сообщение в канале {message.channel.mention} было удалено, а вам выдан **тайм-аут на 5 минут**.\n\n"
                             f"📌 **Причина:** `{threat_type}`\n"
-                            f"⚠️ Публикация ссылок, инвайтов и подозрительных доменов строго запрещена."
+                            f"⚠️ Публикация сторонних ссылок, IP-адресов серверов и рекламы строго запрещена."
                         ),
                         color=COLOR_WARNING
                     )
@@ -162,9 +170,26 @@ class AutoModCog(commands.Cog, name="AutoMod"):
         if is_malicious:
             try:
                 await after.delete()
-                logger.info(f"AutoMod deleted edited link ({threat_type}) from {after.author.name}")
+                logger.info(f"AutoMod deleted edited link/IP/ad ({threat_type}) from {after.author.name}")
             except Exception:
                 pass
+
+            author = after.author
+            if isinstance(author, discord.Member):
+                try:
+                    mute_until = discord.utils.utcnow() + datetime.timedelta(minutes=5)
+                    await author.timeout(mute_until, reason=f"FloryGuard AutoMod Edit: {threat_type} (Мут 5 минут)")
+                except Exception:
+                    pass
+
+                embed = automod_alert_embed(
+                    member=author,
+                    channel=after.channel,
+                    threat_type=f"{threat_type} (Через редактирование)",
+                    matched_content=content,
+                    action="🗑️ Сообщение удалено + 🔇 Тайм-аут (мут) на 5 минут"
+                )
+                await self.bot.send_security_log(guild, embed)
 
 
 async def setup(bot):

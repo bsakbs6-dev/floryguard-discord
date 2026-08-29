@@ -71,7 +71,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
             target_member = interaction.guild.get_member(target_member.id) or interaction.user
 
         # Fetch ranks
-        is_owner = is_bot_owner(target_member.id)
+        is_owner = is_bot_owner(target_member.id, interaction.guild.id)
         is_sr_adm = is_senior_admin(target_member.id, interaction.guild.id)
         is_adm = await is_admin(interaction.guild.id, target_member.id)
         is_wl = await is_whitelisted(interaction.guild.id, target_member.id)

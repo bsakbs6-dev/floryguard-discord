@@ -109,7 +109,7 @@ def profile_embed(
 ) -> discord.Embed:
     # Determine Highest Security Rank
     if is_owner:
-        rank_badge = "👑 **Владелец бота (Bot Owner)**"
+        rank_badge = "👑 **Владелец (Owner)**"
     elif is_senior_admin:
         rank_badge = "💎 **Высший Администратор (Senior Admin)**"
     elif is_admin:

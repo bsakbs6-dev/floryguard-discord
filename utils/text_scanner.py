@@ -52,15 +52,20 @@ SHORTENER_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# Regex for IP addresses (IPv4 with optional port, e.g. 192.168.1.1 or 45.142.122.10:25565)
+IP_REGEX = re.compile(
+    r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?::\d{1,5})?\b'
+)
+
 # Regex for Phishing / Scam keywords & fake domains
 SCAM_DOMAINS_REGEX = re.compile(
-    r'(?:dlscord|discorcl|discrod|discord-app|discord-gift|discord-nitro|nitro-gift|free-nitro|steamcomminuty|steamcommunlty|steamcommunity-trade|steancommunity|rust-skins|csgo-skins|free-robux|claim-nitro|airdrop-token)\.(?:com|org|net|xyz|ru|to|site|online|club|info|link|cc|gg)',
+    r'(?:dlscord|discorcl|discrod|discord-app|discord-gift|discord-nitro|nitro-gift|free-nitro|steamcomminuty|steamcommunlty|steamcommunity-trade|steancommunity|rust-skins|csgo-skins|free-robux|claim-nitro|airdrop-token)\.[a-zA-Z0-9\-]{2,12}',
     re.IGNORECASE
 )
 
 # General URL regex
 GENERAL_URL_REGEX = re.compile(
-    r'(?:https?:\/\/|www\.)[^\s<>\(\)\[\]\{\}]+|(?:\b[a-zA-Z0-9\-]+\.(?:com|net|org|ru|xyz|top|live|site|online|pro|gg|io|me|info|biz|shop|app|tech)\b(?:\/[^\s]*)?)',
+    r'(?:https?:\/\/|www\.)[^\s<>\(\)\[\]\{\}]+|(?:\b[a-zA-Z0-9\-]+\.(?:com|net|org|ru|xyz|top|live|site|online|pro|gg|io|me|info|biz|shop|app|tech|su|by|kz|ua|gift|fun|link|cc|space|cloud|store|dev|page|vip|trade|monster|quest|club|to)\b(?:\/[^\s]*)?)',
     re.IGNORECASE
 )
 
@@ -98,7 +103,7 @@ def deobfuscate_leetspeak(text: str) -> str:
 
 def scan_for_links(text: str) -> Tuple[bool, Optional[str], Optional[str]]:
     """
-    Scans text for prohibited links, phishing, invites, and shorteners.
+    Scans text for prohibited links, phishing, invites, IPs, and shorteners.
     Returns: (is_malicious, match_type, matched_string)
     """
     if not text:
@@ -117,15 +122,20 @@ def scan_for_links(text: str) -> Tuple[bool, Optional[str], Optional[str]]:
     if invite_match:
         return True, "Инвайт-ссылка на Discord сервер", invite_match.group(0)
 
-    # 3. Check for Shorteners
+    # 3. Check for IP addresses (Game server ads, etc.)
+    ip_match = IP_REGEX.search(text) or IP_REGEX.search(cleaned)
+    if ip_match:
+        return True, "IP-адрес / Реклама сервера", ip_match.group(0)
+
+    # 4. Check for Shorteners
     short_match = SHORTENER_REGEX.search(text) or SHORTENER_REGEX.search(cleaned) or SHORTENER_REGEX.search(deobfuscated)
     if short_match:
         return True, "Сокращатель ссылок", short_match.group(0)
 
-    # 4. Check for Any Link / URL
+    # 5. Check for Any Link / URL
     gen_match = GENERAL_URL_REGEX.search(text) or GENERAL_URL_REGEX.search(cleaned)
     if gen_match:
-        return True, "Сторонняя веб-ссылка", gen_match.group(0)
+        return True, "Сторонняя веб-ссылка / Реклама", gen_match.group(0)
 
     return False, None, None
 
