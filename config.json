@@ -22,6 +22,9 @@
     "1480873879181459547": {
       "name": "ApexTime | Лучший сервер",
       "quarantine_role_id": 1542851471274414080,
+      "senior_admin_ids": [
+        1169630335043117182
+      ],
       "log_channel_id": null,
       "automod_enabled": true,
       "anti_nuke_enabled": true,
@@ -30,6 +33,7 @@
     "1391723885862588486": {
       "name": "⚡ FloryMine ⚡",
       "quarantine_role_id": 1542851846270492802,
+      "senior_admin_ids": [],
       "log_channel_id": 1391723887846490224,
       "automod_enabled": true,
       "anti_nuke_enabled": true,

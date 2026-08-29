@@ -72,7 +72,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
 
         # Fetch ranks
         is_owner = is_bot_owner(target_member.id)
-        is_sr_adm = is_senior_admin(target_member.id)
+        is_sr_adm = is_senior_admin(target_member.id, interaction.guild.id)
         is_adm = await is_admin(interaction.guild.id, target_member.id)
         is_wl = await is_whitelisted(interaction.guild.id, target_member.id)
 
@@ -112,11 +112,11 @@ class ModerationCog(commands.Cog, name="Moderation"):
             return
 
         # Check target immunity
-        if is_senior_admin(user.id):
+        if is_senior_admin(user.id, interaction.guild.id):
             await interaction.response.send_message("❌ Невозможно выдать варн Высшему Администратору / Владельцу.", ephemeral=True)
             return
 
-        if await is_admin(interaction.guild.id, user.id) and not is_senior_admin(interaction.user.id):
+        if await is_admin(interaction.guild.id, user.id) and not is_senior_admin(interaction.user.id, interaction.guild.id):
             await interaction.response.send_message("❌ Только **Высшие Администраторы** могут выдавать варны другим администраторам.", ephemeral=True)
             return
 

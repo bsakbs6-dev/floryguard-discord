@@ -119,7 +119,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         if not await self._check_guild_auth(interaction):
             return
 
-        if not is_senior_admin(interaction.user.id):
+        if not is_senior_admin(interaction.user.id, interaction.guild.id):
             await interaction.response.send_message("❌ Только **Высшие Администраторы и Владелец** могут назначать администраторов.", ephemeral=True)
             return
 
@@ -138,7 +138,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         if not await self._check_guild_auth(interaction):
             return
 
-        if not is_senior_admin(interaction.user.id):
+        if not is_senior_admin(interaction.user.id, interaction.guild.id):
             await interaction.response.send_message("❌ Только **Высшие Администраторы и Владелец** могут управлять администраторами.", ephemeral=True)
             return
 
@@ -165,6 +165,11 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         # List hardcoded senior admins / owners
         lines.append("👑 **Владелец бота:** <@1398717669607473254>")
         lines.append("💎 **Высший Администратор:** <@1291370925303795733>")
+
+        guild_sr = AUTHORIZED_GUILDS.get(interaction.guild.id, {}).get("senior_admin_ids", [])
+        for s_id in guild_sr:
+            lines.append(f"⭐ **Высший Администратор сервера:** <@{s_id}>")
+
         lines.append("\n🛡️ **Назначенные администраторы:**")
 
         if admins:
@@ -190,7 +195,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         if not await self._check_guild_auth(interaction):
             return
 
-        if not is_senior_admin(interaction.user.id):
+        if not is_senior_admin(interaction.user.id, interaction.guild.id):
             await interaction.response.send_message("❌ Только **Высшие Администраторы** могут создавать снимки.", ephemeral=True)
             return
 
@@ -273,7 +278,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         if not await self._check_guild_auth(interaction):
             return
 
-        if not is_senior_admin(interaction.user.id):
+        if not is_senior_admin(interaction.user.id, interaction.guild.id):
             await interaction.response.send_message("❌ Только **Высшие Администраторы** могут запускать восстановление.", ephemeral=True)
             return
 
@@ -282,7 +287,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
             await interaction.response.send_message(f"❌ Снимок `{snapshot_id}` не найден.", ephemeral=True)
             return
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         data = snap["data"]
 
@@ -341,7 +346,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
             return
 
         # Check permission: Only Senior Admin & Bot Owner
-        if not is_senior_admin(interaction.user.id):
+        if not is_senior_admin(interaction.user.id, interaction.guild.id):
             await interaction.response.send_message(
                 "❌ Эта команда доступна **только Владельцу бота и Высшим Администраторам**.",
                 ephemeral=True
@@ -399,7 +404,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
             return
 
         # Check permission: Only Senior Admin & Bot Owner
-        if not is_senior_admin(interaction.user.id):
+        if not is_senior_admin(interaction.user.id, interaction.guild.id):
             await interaction.response.send_message(
                 "❌ Эта команда доступна **только Владельцу бота и Высшим Администраторам**.",
                 ephemeral=True
