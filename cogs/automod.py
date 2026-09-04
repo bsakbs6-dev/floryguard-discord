@@ -61,35 +61,48 @@ class AutoModCog(commands.Cog, name="AutoMod"):
         # Extract full content including Rich Embeds
         full_text = extract_all_message_text(message)
 
+        # Detect if this message was sent via a User-Installed App / Application Command
+        trigger_user = None
+        if hasattr(message, "interaction_metadata") and message.interaction_metadata:
+            trigger_user = getattr(message.interaction_metadata, "user", None)
+        elif hasattr(message, "interaction") and message.interaction:
+            trigger_user = getattr(message.interaction, "user", None)
+
+        target_member = None
+        if trigger_user:
+            target_member = guild.get_member(trigger_user.id)
+        elif isinstance(author, discord.Member):
+            target_member = author
+
         # ----------------------------------------------------
         # 1. CROSS-CHANNEL SPAM / RAID BROADCASTER KILLER
         # ----------------------------------------------------
-        is_cross_spam = self.bot.cross_channel_tracker.record_channel_message(guild.id, author.id, message.channel.id)
+        tracker_user_id = trigger_user.id if trigger_user else author.id
+        is_cross_spam = self.bot.cross_channel_tracker.record_channel_message(guild.id, tracker_user_id, message.channel.id)
         if is_cross_spam:
             try:
                 await message.delete()
             except Exception:
                 pass
 
-            if author.bot and author.id != self.bot.user.id:
-                # INSTANT BAN for rogue raid bots broadcasting across channels
+            if target_member and not target_member.bot:
+                try:
+                    await target_member.timeout(discord.utils.utcnow() + datetime.timedelta(hours=24), reason="FloryGuard: Спам-рассылка через User-App/Бота по каналам")
+                except Exception:
+                    pass
+
+            if author.bot and author.id != self.bot.user.id and guild.get_member(author.id):
                 try:
                     await guild.ban(author, reason="FloryGuard Anti-Nuke: Массовая рассылка по каналам (Raid Bot Killer)")
-                    logger.critical(f"BANNED ROGUE BOT {author.name} ({author.id}) in {guild.name} for cross-channel raid spam!")
-                except Exception as e:
-                    logger.error(f"Failed to ban rogue bot {author.name}: {e}")
-            elif isinstance(author, discord.Member):
-                try:
-                    await author.timeout(discord.utils.utcnow() + datetime.timedelta(hours=24), reason="FloryGuard: Массовый спам по каналам сервера")
                 except Exception:
                     pass
 
             embed = automod_alert_embed(
-                member=author,
+                member=target_member or author,
                 channel=message.channel,
-                threat_type="🚨 Массовая рассылка по каналам (Cross-Channel Raid)",
+                threat_type="🚨 Массовая рассылка по каналам (Cross-Channel User-App / Bot Raid)",
                 matched_content=full_text[:300] if full_text else "Спам-рассылка",
-                action="⛔ Сторонний бот заблокирован (BAN)" if author.bot else "Тайм-аут на 24 часа"
+                action="Сообщение удалено + Тайм-аут на 24 часа"
             )
             await self.bot.send_security_log(guild, embed)
             return
@@ -107,25 +120,24 @@ class AutoModCog(commands.Cog, name="AutoMod"):
             except Exception:
                 pass
 
-            if author.bot and author.id != self.bot.user.id:
-                # Any rogue bot pinging @everyone or mass roles gets INSTANTLY BANNED
+            if target_member and not target_member.bot:
                 try:
-                    await guild.ban(author, reason="FloryGuard Anti-Nuke: Попытка массового пинга (@everyone) от стороннего бота")
-                    logger.critical(f"BANNED ROGUE BOT {author.name} for mass mentions in {guild.name}")
-                except Exception as e:
-                    logger.error(f"Failed to ban rogue bot: {e}")
-            elif isinstance(author, discord.Member):
+                    await target_member.timeout(discord.utils.utcnow() + datetime.timedelta(hours=1), reason="FloryGuard: Массовый пинг через User-App / бота")
+                except Exception:
+                    pass
+
+            if author.bot and author.id != self.bot.user.id and guild.get_member(author.id):
                 try:
-                    await author.timeout(discord.utils.utcnow() + datetime.timedelta(hours=1), reason="FloryGuard: Массовый пинг / @everyone")
+                    await guild.ban(author, reason="FloryGuard Anti-Nuke: Попытка массового пинга (@everyone) от бота")
                 except Exception:
                     pass
 
             embed = automod_alert_embed(
-                member=author,
+                member=target_member or author,
                 channel=message.channel,
                 threat_type=f"Массовые упоминания ({total_mentions} mentions / @everyone)",
                 matched_content=full_text[:300],
-                action="⛔ Сторонний бот заблокирован (BAN)" if author.bot else "Сообщение удалено + Мут на 1 час"
+                action="Сообщение удалено + Мут на 1 час"
             )
             await self.bot.send_security_log(guild, embed)
             return
@@ -141,41 +153,39 @@ class AutoModCog(commands.Cog, name="AutoMod"):
             except Exception as e:
                 logger.error(f"Failed to delete malicious message: {e}")
 
-            if author.bot and author.id != self.bot.user.id:
-                # If another bot sends links, ads, or scam -> BAN THE BOT IMMEDIATELY
-                try:
-                    await guild.ban(author, reason=f"FloryGuard Anti-Nuke: Сторонний бот рассылает рекламу/ссылки ({threat_type})")
-                    logger.critical(f"BANNED ROGUE BOT {author.name} for advertising/phishing links!")
-                except Exception as e:
-                    logger.error(f"Failed to ban rogue bot: {e}")
-            elif isinstance(author, discord.Member):
+            if target_member and not target_member.bot:
                 try:
                     mute_until = discord.utils.utcnow() + datetime.timedelta(minutes=5)
-                    await author.timeout(mute_until, reason=f"FloryGuard AutoMod: {threat_type} (Мут 5 минут)")
+                    await target_member.timeout(mute_until, reason=f"FloryGuard AutoMod: {threat_type} (через User-App)")
                 except Exception as e:
-                    logger.error(f"Failed to apply 5m timeout to {author.name}: {e}")
+                    logger.error(f"Failed to apply 5m timeout: {e}")
 
-                # Send direct notification to human user
                 try:
                     warn_emb = create_security_embed(
                         title="🔇 ВЫ ПОЛУЧИЛИ МУТ НА 5 МИНУТ",
                         description=(
-                            f"Ваше сообщение в канале {message.channel.mention} было удалено, а вам выдан **тайм-аут на 5 минут**.\n\n"
+                            f"Ваше сообщение/команда в канале {message.channel.mention} было удалено, а вам выдан **тайм-аут на 5 минут**.\n\n"
                             f"📌 **Причина:** `{threat_type}`\n"
                             f"⚠️ Публикация сторонних ссылок, IP-адресов серверов и рекламы строго запрещена."
                         ),
                         color=COLOR_WARNING
                     )
-                    await author.send(embed=warn_emb)
+                    await target_member.send(embed=warn_emb)
+                except Exception:
+                    pass
+
+            if author.bot and author.id != self.bot.user.id and guild.get_member(author.id):
+                try:
+                    await guild.ban(author, reason=f"FloryGuard Anti-Nuke: Бот рассылает рекламу/ссылки ({threat_type})")
                 except Exception:
                     pass
 
             embed = automod_alert_embed(
-                member=author,
+                member=target_member or author,
                 channel=message.channel,
-                threat_type=threat_type,
+                threat_type=f"{threat_type} (User-App / Бот)" if trigger_user else threat_type,
                 matched_content=full_text[:300],
-                action="⛔ Сторонний бот заблокирован (BAN)" if author.bot else "🗑️ Сообщение удалено + 🔇 Тайм-аут (мут) на 5 минут"
+                action="🗑️ Сообщение удалено + 🔇 Тайм-аут (мут) на 5 минут"
             )
             await self.bot.send_security_log(guild, embed)
             return
