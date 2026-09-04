@@ -93,3 +93,32 @@ class JoinSpikeTracker:
 
     def set_lockdown(self, guild_id: int, status: bool):
         self._lockdown_active[guild_id] = status
+
+
+class CrossChannelSpamTracker:
+    """Tracks message broadcasting across multiple channels to instantly stop nuke/raid bots."""
+    def __init__(self, max_channels: int = 3, window_seconds: float = 4.0):
+        self.max_channels = max_channels
+        self.window_seconds = window_seconds
+        # Mapping: (guild_id, user_id) -> Deque[Tuple[float, int]] (timestamp, channel_id)
+        self._history: Dict[Tuple[int, int], Deque[Tuple[float, int]]] = defaultdict(deque)
+
+    def record_channel_message(self, guild_id: int, user_id: int, channel_id: int) -> bool:
+        """
+        Record a message sent in channel_id.
+        Returns True if the user/bot is spamming across multiple channels in short window.
+        """
+        now = time.monotonic()
+        key = (guild_id, user_id)
+        history = self._history[key]
+
+        while history and (now - history[0][0] > self.window_seconds):
+            history.popleft()
+
+        history.append((now, channel_id))
+        unique_channels = {ch_id for _, ch_id in history}
+
+        # Trigger if 3+ different channels within 4 seconds OR 6 total messages
+        if len(unique_channels) >= self.max_channels or len(history) >= 6:
+            return True
+        return False

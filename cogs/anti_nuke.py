@@ -4,7 +4,7 @@ from discord.ext import commands
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 
-from core.permissions import is_authorized_guild, is_admin, is_whitelisted
+from core.permissions import is_authorized_guild, is_admin, is_whitelisted, is_senior_admin
 from utils.logger import logger
 from utils.embeds import anti_nuke_alert_embed
 
@@ -485,6 +485,100 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
             target_info=f"{after.name} ({after.id})",
             rollback_status="Роли участника возвращены в исходное состояние" if rollback_ok else "Ошибка отката",
             warn_count=warn_count
+        )
+        await self.bot.send_security_log(guild, embed)
+
+    # ==========================================
+    # 9. ROGUE BOT ADD PROTECTION (INSTANT BOT BAN & DEMOTE)
+    # ==========================================
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        guild = member.guild
+        if not is_authorized_guild(guild):
+            return
+
+        if not member.bot:
+            return
+
+        # Look up who invited the bot
+        executor = await self._get_audit_executor(guild, discord.AuditLogAction.bot_add, target_id=member.id)
+        if not executor or executor.id == self.bot.user.id:
+            return
+
+        # Check permission: Only Senior Admins / Bot Owners can add bots to the server
+        if is_senior_admin(executor.id, guild.id):
+            return
+
+        logger.critical(f"UNAUTHORIZED BOT INVITATION in {guild.name}: {member.name} ({member.id}) by {executor.name} ({executor.id})")
+
+        # 1. Immediately BAN the unauthorized bot
+        banned_ok = False
+        try:
+            await member.ban(reason="FloryGuard Anti-Nuke: Несанкционированное добавление стороннего бота (Защита от краша)")
+            banned_ok = True
+        except Exception as e:
+            logger.error(f"Failed to ban unauthorized bot {member.name}: {e}")
+
+        # 2. Immediately Demote / Quarantine the executor who added the bot
+        demoted_ok = False
+        if isinstance(executor, discord.Member):
+            demoted_ok = await self.bot.quarantine_member(
+                guild=guild,
+                member=executor,
+                reason="Несанкционированное добавление стороннего бота (Попытка краша/рейда)"
+            )
+
+        # 3. Send Critical Security Log
+        embed = anti_nuke_alert_embed(
+            action_type="🚨 Внедрение стороннего бота (Bot Add)",
+            executor=executor,
+            target_info=f"Бот: {member.name} (`{member.id}`)",
+            rollback_status="Сторонний бот заблокирован (BAN)" if banned_ok else "Ошибка бана бота",
+            immediate_demote=demoted_ok
+        )
+        await self.bot.send_security_log(guild, embed)
+
+    # ==========================================
+    # 10. WEBHOOK CREATION PROTECTION
+    # ==========================================
+    @commands.Cog.listener()
+    async def on_webhooks_update(self, channel: discord.abc.GuildChannel):
+        guild = channel.guild
+        if not is_authorized_guild(guild):
+            return
+
+        executor = await self._get_audit_executor(guild, discord.AuditLogAction.webhook_create, target_id=channel.id)
+        if not executor or executor.id == self.bot.user.id:
+            return
+
+        if await is_admin(guild.id, executor.id):
+            return
+
+        logger.critical(f"UNAUTHORIZED WEBHOOK CREATED in {guild.name} in #{channel.name} by {executor.name}")
+
+        # Delete unauthorized webhooks in channel
+        deleted_count = 0
+        try:
+            if isinstance(channel, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
+                webhooks = await channel.webhooks()
+                for wh in webhooks:
+                    if wh.user and wh.user.id != self.bot.user.id and not is_senior_admin(wh.user.id, guild.id):
+                        await wh.delete(reason="FloryGuard Anti-Nuke: Удаление несанкционированного вебхука")
+                        deleted_count += 1
+        except Exception as e:
+            logger.error(f"Failed to delete rogue webhooks in #{channel.name}: {e}")
+
+        # Quarantine executor
+        demoted = False
+        if isinstance(executor, discord.Member):
+            demoted = await self.bot.quarantine_member(guild, executor, "Создание несанкционированного вебхука")
+
+        embed = anti_nuke_alert_embed(
+            action_type="🚨 Создание несанкционированного вебхука",
+            executor=executor,
+            target_info=f"Канал #{channel.name} (Удалено вебхуков: {deleted_count})",
+            rollback_status=f"Удалено вебхуков: {deleted_count}",
+            immediate_demote=demoted
         )
         await self.bot.send_security_log(guild, embed)
 

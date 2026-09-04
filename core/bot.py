@@ -15,7 +15,12 @@ from utils.embeds import (
     COLOR_WARNING,
     COLOR_SUCCESS,
 )
-from core.rate_limiter import TokenBucketRateLimiter, MessageHistoryCache, JoinSpikeTracker
+from core.rate_limiter import (
+    TokenBucketRateLimiter,
+    MessageHistoryCache,
+    JoinSpikeTracker,
+    CrossChannelSpamTracker,
+)
 
 
 class FloryGuardBot(commands.Bot):
@@ -38,6 +43,7 @@ class FloryGuardBot(commands.Bot):
         self.rate_limiter = TokenBucketRateLimiter(max_tokens=4, window_seconds=3.0)
         self.msg_history = MessageHistoryCache(max_history=5, ttl_seconds=60.0)
         self.raid_tracker = JoinSpikeTracker(threshold=5, window_seconds=5.0)
+        self.cross_channel_tracker = CrossChannelSpamTracker(max_channels=3, window_seconds=4.0)
 
     async def setup_hook(self):
         """Called automatically before the bot starts accepting events."""
