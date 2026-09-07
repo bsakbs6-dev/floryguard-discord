@@ -58,6 +58,7 @@ class FloryGuardBot(commands.Bot):
             "cogs.anti_raid",
             "cogs.moderation",
             "cogs.admin_guard",
+            "cogs.transfer",
         ]
 
         for cog in cogs_list:
