@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 from datetime import datetime, timezone, timedelta
 
-from core.permissions import is_authorized_guild
+from core.permissions import is_authorized_guild, is_whitelisted
 from utils.logger import logger
 from utils.embeds import create_security_embed, COLOR_DANGER, COLOR_WARNING
 
@@ -18,6 +18,10 @@ class AntiRaidCog(commands.Cog, name="AntiRaid"):
     async def on_member_join(self, member: discord.Member):
         guild = member.guild
         if not is_authorized_guild(guild):
+            return
+
+        # Whitelisted members and bots are completely exempt
+        if await is_whitelisted(guild.id, member.id):
             return
 
         now = datetime.now(timezone.utc)

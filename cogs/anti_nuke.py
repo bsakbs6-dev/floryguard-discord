@@ -68,8 +68,8 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        # Check if executor is an authorized Admin
-        if await is_admin(guild.id, executor.id):
+        # Check if executor is an authorized Admin or Whitelisted
+        if await is_whitelisted(guild.id, executor.id):
             return
 
         logger.warning(f"UNAUTHORIZED BAN detected in {guild.name} by {executor.name} ({executor.id}) against {user.name}")
@@ -104,7 +104,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_admin(guild.id, executor.id):
+        if await is_whitelisted(guild.id, executor.id):
             return
 
         logger.warning(f"UNAUTHORIZED CHANNEL DELETE in {guild.name} by {executor.name} ({executor.id}): #{channel.name}")
@@ -182,7 +182,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_admin(guild.id, executor.id):
+        if await is_whitelisted(guild.id, executor.id):
             return
 
         logger.warning(f"UNAUTHORIZED CHANNEL CREATE in {guild.name} by {executor.name}: #{channel.name}")
@@ -240,7 +240,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_admin(guild.id, executor.id):
+        if await is_whitelisted(guild.id, executor.id):
             return
 
         logger.warning(f"UNAUTHORIZED CHANNEL UPDATE in {guild.name} by {executor.name}: #{after.name}")
@@ -297,7 +297,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_admin(guild.id, executor.id):
+        if await is_whitelisted(guild.id, executor.id):
             return
 
         logger.warning(f"UNAUTHORIZED ROLE DELETE in {guild.name} by {executor.name}: @{role.name}")
@@ -353,7 +353,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_admin(guild.id, executor.id):
+        if await is_whitelisted(guild.id, executor.id):
             return
 
         logger.warning(f"UNAUTHORIZED ROLE CREATE in {guild.name} by {executor.name}: @{role.name}")
@@ -399,7 +399,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_admin(guild.id, executor.id):
+        if await is_whitelisted(guild.id, executor.id):
             return
 
         logger.warning(f"UNAUTHORIZED ROLE UPDATE in {guild.name} by {executor.name}: @{after.name}")
@@ -456,7 +456,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_admin(guild.id, executor.id):
+        if await is_whitelisted(guild.id, executor.id):
             return
 
         # Roles were altered by someone who is not in Admin list
@@ -505,8 +505,10 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        # Check permission: Only Senior Admins / Bot Owners can add bots to the server
-        if is_senior_admin(executor.id, guild.id):
+        # Check permission: If the bot itself is in whitelist/admin, or the executor is whitelisted/admin:
+        if await is_whitelisted(guild.id, member.id):
+            return
+        if await is_whitelisted(guild.id, executor.id):
             return
 
         logger.critical(f"UNAUTHORIZED BOT INVITATION in {guild.name}: {member.name} ({member.id}) by {executor.name} ({executor.id})")
@@ -551,7 +553,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_admin(guild.id, executor.id):
+        if await is_whitelisted(guild.id, executor.id):
             return
 
         logger.critical(f"UNAUTHORIZED WEBHOOK CREATED in {guild.name} in #{channel.name} by {executor.name}")
@@ -562,7 +564,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
             if isinstance(channel, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
                 webhooks = await channel.webhooks()
                 for wh in webhooks:
-                    if wh.user and wh.user.id != self.bot.user.id and not is_senior_admin(wh.user.id, guild.id):
+                    if wh.user and wh.user.id != self.bot.user.id and not await is_whitelisted(guild.id, wh.user.id):
                         await wh.delete(reason="FloryGuard Anti-Nuke: Удаление несанкционированного вебхука")
                         deleted_count += 1
         except Exception as e:
