@@ -9,7 +9,8 @@ from core.permissions import (
     is_senior_admin,
     is_bot_owner,
     is_admin,
-    is_whitelisted
+    is_whitelisted,
+    get_admin_info
 )
 from database.db import db
 from utils.logger import logger
@@ -70,11 +71,12 @@ class ModerationCog(commands.Cog, name="Moderation"):
         if not isinstance(target_member, discord.Member):
             target_member = interaction.guild.get_member(target_member.id) or interaction.user
 
-        # Fetch ranks
+        # Fetch ranks & admin details
         is_owner = is_bot_owner(target_member.id, interaction.guild.id)
         is_sr_adm = is_senior_admin(target_member.id, interaction.guild.id)
         is_adm = await is_admin(interaction.guild.id, target_member.id)
         is_wl = await is_whitelisted(interaction.guild.id, target_member.id)
+        admin_info = await get_admin_info(interaction.guild.id, target_member.id)
 
         # Fetch active warnings
         warnings = await db.get_active_warnings(interaction.guild.id, target_member.id)
@@ -85,7 +87,8 @@ class ModerationCog(commands.Cog, name="Moderation"):
             is_senior_admin=is_sr_adm,
             is_admin=is_adm,
             is_whitelisted=is_wl,
-            warnings=warnings
+            warnings=warnings,
+            admin_info=admin_info
         )
 
         view = DeleteMessageView(target_user_id=interaction.user.id)

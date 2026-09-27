@@ -4,7 +4,7 @@ from discord.ext import commands
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 
-from core.permissions import is_authorized_guild, is_admin, is_whitelisted, is_senior_admin
+from core.permissions import is_authorized_guild, is_admin, is_whitelisted, is_senior_admin, has_permission
 from utils.logger import logger
 from utils.embeds import anti_nuke_alert_embed
 
@@ -57,7 +57,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         return None
 
     # ==========================================
-    # 1. MEMBER BAN PROTECTION (IMMEDIATE DEMOTE)
+    # 1. MEMBER BAN PROTECTION (UNBAN & DEMOTE)
     # ==========================================
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User | discord.Member):
@@ -68,28 +68,119 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        # Check if executor is an authorized Admin or Whitelisted
-        if await is_whitelisted(guild.id, executor.id):
+        # Check granular permission: ban_members
+        if await has_permission(guild.id, executor.id, "ban_members"):
             return
 
         logger.warning(f"UNAUTHORIZED BAN detected in {guild.name} by {executor.name} ({executor.id}) against {user.name}")
 
+        # Immediate Rollback: Unban victim
+        unban_ok = False
+        try:
+            await guild.unban(user, reason=f"FloryGuard Anti-Nuke: Несанкционированная блокировка от {executor.name}")
+            unban_ok = True
+        except Exception as e:
+            logger.error(f"Failed to unban victim {user.name}: {e}")
+
         # Immediate Demote Action
         demoted = False
         if isinstance(executor, discord.Member):
-            # If user is not whitelisted, strip roles immediately
-            if not await is_whitelisted(guild.id, executor.id):
-                demoted = await self.bot.quarantine_member(guild, executor, "Несанкционированная блокировка пользователя (Anti-Nuke)")
+            demoted = await self.bot.quarantine_member(guild, executor, "Несанкционированная блокировка пользователя (Anti-Nuke)")
 
         # Send Security Log
         embed = anti_nuke_alert_embed(
             action_type="Блокировка участника (Ban)",
             executor=executor,
             target_info=f"{user.name} ({user.id})",
-            rollback_status="Заблокирован (ручная проверка)",
-            immediate_demote=True
+            rollback_status="Участник разбанен (Откат выполнен)" if unban_ok else "Ошибка разбана",
+            immediate_demote=demoted
         )
         await self.bot.send_security_log(guild, embed)
+
+    # ==========================================
+    # 1.1 MEMBER KICK PROTECTION (DEMOTE)
+    # ==========================================
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        guild = member.guild
+        if not is_authorized_guild(guild):
+            return
+
+        executor = await self._get_audit_executor(guild, discord.AuditLogAction.kick, target_id=member.id)
+        if not executor or executor.id == self.bot.user.id:
+            return
+
+        # Check granular permission: kick_members
+        if await has_permission(guild.id, executor.id, "kick_members"):
+            return
+
+        logger.warning(f"UNAUTHORIZED KICK in {guild.name} by {executor.name} ({executor.id}) against {member.name}")
+
+        demoted = False
+        if isinstance(executor, discord.Member):
+            demoted = await self.bot.quarantine_member(guild, executor, f"Несанкционированное изгнание (кик) {member.name}")
+
+        embed = anti_nuke_alert_embed(
+            action_type="Изгнание участника (Kick)",
+            executor=executor,
+            target_info=f"{member.name} ({member.id})",
+            rollback_status="Участник изгнан (нарушитель изолирован)",
+            immediate_demote=demoted
+        )
+        await self.bot.send_security_log(guild, embed)
+
+    # ==========================================
+    # 1.2 SERVER EDIT PROTECTION (ROLLBACK & DEMOTE)
+    # ==========================================
+    @commands.Cog.listener()
+    async def on_guild_update(self, before: discord.Guild, after: discord.Guild):
+        if not is_authorized_guild(after):
+            return
+
+        changed = (before.name != after.name or before.icon != after.icon or before.description != after.description)
+        if not changed:
+            return
+
+        executor = await self._get_audit_executor(after, discord.AuditLogAction.guild_update)
+        if not executor or executor.id == self.bot.user.id:
+            return
+
+        # Check granular permission: server_edit
+        if await has_permission(after.id, executor.id, "server_edit"):
+            return
+
+        logger.warning(f"UNAUTHORIZED SERVER UPDATE in {after.name} by {executor.name}")
+
+        rollback_ok = False
+        try:
+            icon_bytes = None
+            if before.icon:
+                try:
+                    icon_bytes = await before.icon.read()
+                except Exception:
+                    pass
+            await after.edit(
+                name=before.name,
+                description=before.description,
+                icon=icon_bytes,
+                reason="FloryGuard Anti-Nuke: Откат несанкционированного изменения параметров сервера"
+            )
+            rollback_ok = True
+        except Exception as e:
+            logger.error(f"Failed to rollback server edit: {e}")
+
+        demoted = False
+        if isinstance(executor, discord.Member):
+            demoted = await self.bot.quarantine_member(after, executor, "Несанкционированное изменение настроек сервера")
+
+        embed = anti_nuke_alert_embed(
+            action_type="Изменение настроек сервера",
+            executor=executor,
+            target_info=f"Сервер {before.name}",
+            rollback_status="Настройки сервера возвращены в исходное состояние" if rollback_ok else "Ошибка отката",
+            immediate_demote=demoted
+        )
+        await self.bot.send_security_log(after, embed)
 
     # ==========================================
     # 2. CHANNEL DELETION PROTECTION (ROLLBACK & WARN)
@@ -104,7 +195,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_whitelisted(guild.id, executor.id):
+        if await has_permission(guild.id, executor.id, "channels_manage"):
             return
 
         logger.warning(f"UNAUTHORIZED CHANNEL DELETE in {guild.name} by {executor.name} ({executor.id}): #{channel.name}")
@@ -182,7 +273,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_whitelisted(guild.id, executor.id):
+        if await has_permission(guild.id, executor.id, "channels_manage"):
             return
 
         logger.warning(f"UNAUTHORIZED CHANNEL CREATE in {guild.name} by {executor.name}: #{channel.name}")
@@ -240,7 +331,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_whitelisted(guild.id, executor.id):
+        if await has_permission(guild.id, executor.id, "channels_manage"):
             return
 
         logger.warning(f"UNAUTHORIZED CHANNEL UPDATE in {guild.name} by {executor.name}: #{after.name}")
@@ -297,7 +388,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_whitelisted(guild.id, executor.id):
+        if await has_permission(guild.id, executor.id, "roles_edit"):
             return
 
         logger.warning(f"UNAUTHORIZED ROLE DELETE in {guild.name} by {executor.name}: @{role.name}")
@@ -353,7 +444,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_whitelisted(guild.id, executor.id):
+        if await has_permission(guild.id, executor.id, "roles_edit"):
             return
 
         logger.warning(f"UNAUTHORIZED ROLE CREATE in {guild.name} by {executor.name}: @{role.name}")
@@ -399,7 +490,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_whitelisted(guild.id, executor.id):
+        if await has_permission(guild.id, executor.id, "roles_edit"):
             return
 
         logger.warning(f"UNAUTHORIZED ROLE UPDATE in {guild.name} by {executor.name}: @{after.name}")
@@ -456,7 +547,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_whitelisted(guild.id, executor.id):
+        if await has_permission(guild.id, executor.id, "roles_assign"):
             return
 
         # Roles were altered by someone who is not in Admin list
@@ -553,7 +644,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await is_whitelisted(guild.id, executor.id):
+        if await has_permission(guild.id, executor.id, "webhooks_manage"):
             return
 
         logger.critical(f"UNAUTHORIZED WEBHOOK CREATED in {guild.name} in #{channel.name} by {executor.name}")
@@ -564,7 +655,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
             if isinstance(channel, (discord.TextChannel, discord.VoiceChannel, discord.StageChannel, discord.ForumChannel)):
                 webhooks = await channel.webhooks()
                 for wh in webhooks:
-                    if wh.user and wh.user.id != self.bot.user.id and not await is_whitelisted(guild.id, wh.user.id):
+                    if wh.user and wh.user.id != self.bot.user.id and not await has_permission(guild.id, wh.user.id, "webhooks_manage"):
                         await wh.delete(reason="FloryGuard Anti-Nuke: Удаление несанкционированного вебхука")
                         deleted_count += 1
         except Exception as e:

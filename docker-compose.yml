@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  floryguard:
+    build: .
+    container_name: floryguard_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./database:/app/database

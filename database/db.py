@@ -27,9 +27,19 @@ class Database:
                     user_id INTEGER NOT NULL,
                     added_by INTEGER NOT NULL,
                     added_at TIMESTAMP NOT NULL,
+                    title TEXT DEFAULT 'Администратор Безопасности',
+                    permissions TEXT DEFAULT 'all',
                     PRIMARY KEY (guild_id, user_id)
                 );
             """)
+
+            # Safe migration: ensure title and permissions columns exist
+            async with db.execute("PRAGMA table_info(admins);") as cursor:
+                admin_cols = [row[1] for row in await cursor.fetchall()]
+                if "title" not in admin_cols:
+                    await db.execute("ALTER TABLE admins ADD COLUMN title TEXT DEFAULT 'Администратор Безопасности';")
+                if "permissions" not in admin_cols:
+                    await db.execute("ALTER TABLE admins ADD COLUMN permissions TEXT DEFAULT 'all';")
 
             # Table for Whitelist
             await db.execute("""
@@ -95,15 +105,58 @@ class Database:
             await db.commit()
 
     # --- ADMIN MANAGEMENT ---
-    async def add_admin(self, guild_id: int, user_id: int, added_by: int) -> bool:
+    async def add_admin(
+        self,
+        guild_id: int,
+        user_id: int,
+        added_by: int,
+        title: str = "Администратор Безопасности",
+        permissions: str = "all"
+    ) -> bool:
         async with aiosqlite.connect(self.db_path) as db:
             now = datetime.now(timezone.utc).isoformat()
             await db.execute(
-                "INSERT OR REPLACE INTO admins (guild_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)",
-                (guild_id, user_id, added_by, now)
+                """INSERT OR REPLACE INTO admins 
+                   (guild_id, user_id, added_by, added_at, title, permissions) 
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (guild_id, user_id, added_by, now, title, permissions)
             )
             await db.commit()
             return True
+
+    async def update_admin(
+        self,
+        guild_id: int,
+        user_id: int,
+        title: Optional[str] = None,
+        permissions: Optional[str] = None
+    ) -> bool:
+        async with aiosqlite.connect(self.db_path) as db:
+            updates = []
+            params = []
+            if title is not None:
+                updates.append("title = ?")
+                params.append(title)
+            if permissions is not None:
+                updates.append("permissions = ?")
+                params.append(permissions)
+            if not updates:
+                return False
+            params.extend([guild_id, user_id])
+            query = f"UPDATE admins SET {', '.join(updates)} WHERE guild_id = ? AND user_id = ?"
+            cursor = await db.execute(query, params)
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def get_admin(self, guild_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM admins WHERE (guild_id = ? OR guild_id = 0) AND user_id = ?",
+                (guild_id, user_id)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
 
     async def remove_admin(self, guild_id: int, user_id: int) -> bool:
         async with aiosqlite.connect(self.db_path) as db:
@@ -132,6 +185,43 @@ class Database:
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
+
+    async def get_user_permissions(self, guild_id: int, user_id: int) -> tuple[set[str], str]:
+        """Returns (permissions_set, title) for the specified user."""
+        admin = await self.get_admin(guild_id, user_id)
+        if not admin:
+            return set(), "Участник"
+        perms_str = admin.get("permissions") or ""
+        title = admin.get("title") or "Администратор Безопасности"
+        if perms_str == "all" or "*" in perms_str:
+            from core.permissions import AVAILABLE_PERMISSIONS
+            return set(AVAILABLE_PERMISSIONS.keys()), title
+        return {p.strip() for p in perms_str.split(",") if p.strip()}, title
+
+    async def set_user_permissions(
+        self,
+        guild_id: int,
+        user_id: int,
+        permissions: set[str],
+        updated_by: int,
+        title: Optional[str] = None
+    ) -> bool:
+        """Saves updated permissions set for user in admins table."""
+        from core.permissions import AVAILABLE_PERMISSIONS
+        if len(permissions) >= len(AVAILABLE_PERMISSIONS):
+            perms_str = "all"
+        elif not permissions:
+            perms_str = "none"
+        else:
+            perms_str = ",".join(sorted(permissions))
+
+        admin = await self.get_admin(guild_id, user_id)
+        if admin:
+            final_title = title if title is not None else admin.get("title", "Администратор Безопасности")
+            return await self.update_admin(guild_id, user_id, title=final_title, permissions=perms_str)
+        else:
+            final_title = title or "Администратор Безопасности"
+            return await self.add_admin(guild_id, user_id, updated_by, title=final_title, permissions=perms_str)
 
     # --- WHITELIST MANAGEMENT ---
     async def add_whitelist(self, guild_id: int, user_id: int, added_by: int, reason: str = "No reason provided") -> bool:

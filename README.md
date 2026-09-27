@@ -101,10 +101,10 @@ COMMAND_PREFIX=!fg
     "senior_admin_ids": [1291370925303795733]
   },
   "authorized_guilds": {
-    "1480873879181459547": {
-      "name": "Server 1",
-      "quarantine_role_id": 1542851471274414080,
-      "log_channel_id": null
+    "1391723885862588486": {
+      "name": "⚡ FloryMine ⚡",
+      "quarantine_role_id": 1542851846270492802,
+      "log_channel_id": 1391723887846490224
     }
   }
 }

@@ -11,7 +11,9 @@ from core.permissions import (
     is_senior_admin,
     is_bot_owner,
     is_admin,
-    is_whitelisted
+    is_whitelisted,
+    AVAILABLE_PERMISSIONS,
+    get_admin_info
 )
 from database.db import db
 from utils.logger import logger
@@ -22,6 +24,110 @@ from utils.embeds import (
     COLOR_WARNING,
     COLOR_DANGER
 )
+
+
+class AdminPermissionSelect(discord.ui.Select):
+    def __init__(self, current_perms: list):
+        options = [
+            discord.SelectOption(
+                label="Все права (Full Access)",
+                value="all",
+                description="Полный доступ ко всем операциям и настройкам",
+                emoji="⭐",
+                default=("all" in current_perms)
+            )
+        ]
+        for key, meta in AVAILABLE_PERMISSIONS.items():
+            options.append(
+                discord.SelectOption(
+                    label=meta["label"],
+                    value=key,
+                    description=meta["description"][:100],
+                    emoji=meta["emoji"],
+                    default=(key in current_perms and "all" not in current_perms)
+                )
+            )
+
+        super().__init__(
+            placeholder="Выберите права для администратора...",
+            min_values=1,
+            max_values=len(options),
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+
+class AdminConfigView(discord.ui.View):
+    def __init__(
+        self,
+        bot,
+        guild_id: int,
+        target_user: discord.Member,
+        senior_admin: discord.Member,
+        title: str,
+        current_perms: list,
+        is_edit: bool = False
+    ):
+        super().__init__(timeout=180)
+        self.bot = bot
+        self.guild_id = guild_id
+        self.target_user = target_user
+        self.senior_admin = senior_admin
+        self.title = title
+        self.is_edit = is_edit
+        self.select = AdminPermissionSelect(current_perms)
+        self.add_item(self.select)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.senior_admin.id:
+            await interaction.response.send_message("❌ Только администратор, вызвавший команду, может настраивать права.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Сохранить права", style=discord.ButtonStyle.success, emoji="💾")
+    async def save_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        selected = self.select.values
+        if not selected or "all" in selected:
+            final_perms = "all"
+        else:
+            final_perms = ",".join(selected)
+
+        if self.is_edit:
+            await db.update_admin(self.guild_id, self.target_user.id, title=self.title, permissions=final_perms)
+            action_name = "ИЗМЕНЕНЫ ПРАВА АДМИНИСТРАТОРА"
+            desc_prefix = f"Обновлены параметры для {self.target_user.mention} (`{self.target_user.id}`)."
+        else:
+            await db.add_admin(self.guild_id, self.target_user.id, self.senior_admin.id, title=self.title, permissions=final_perms)
+            action_name = "НАЗНАЧЕН АДМИНИСТРАТОР БЕЗОПАСНОСТИ"
+            desc_prefix = f"Пользователь {self.target_user.mention} (`{self.target_user.id}`) назначен администратором."
+
+        if final_perms == "all":
+            perms_text = "⭐ **Все права (Full Access)**"
+        else:
+            lines = []
+            for p in selected:
+                if p in AVAILABLE_PERMISSIONS:
+                    meta = AVAILABLE_PERMISSIONS[p]
+                    lines.append(f"• {meta['emoji']} **{meta['label']}**")
+            perms_text = "\n".join(lines) if lines else "*Базовые права*"
+
+        embed = create_security_embed(
+            title=f"🛡️ {action_name}",
+            description=(
+                f"{desc_prefix}\n\n"
+                f"🏷️ **Должность / Префикс:** `{self.title}`\n\n"
+                f"📜 **Выданные полномочия:**\n{perms_text}"
+            ),
+            color=COLOR_SUCCESS
+        )
+
+        for item in self.children:
+            item.disabled = True
+
+        await interaction.response.edit_message(embed=embed, view=self)
+        await self.bot.send_security_log(interaction.guild, embed)
 
 
 class AdminGuardCog(commands.Cog, name="AdminGuard"):
@@ -109,13 +215,13 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ==========================================
-    # /ADMIN GROUP (ADD / REMOVE / LIST)
+    # /ADMIN GROUP (ADD / EDIT / REMOVE / LIST)
     # ==========================================
     admin_group = app_commands.Group(name="admin", description="Управление Администраторами Безопасности")
 
-    @admin_group.command(name="add", description="Назначить Администратора Безопасности")
-    @app_commands.describe(user="Пользователь")
-    async def admin_add(self, interaction: discord.Interaction, user: discord.Member):
+    @admin_group.command(name="add", description="Назначить Администратора Безопасности с настройкой должности и прав")
+    @app_commands.describe(user="Пользователь или бот", title="Личная должность/префикс (например: Куратор Стаффа)")
+    async def admin_add(self, interaction: discord.Interaction, user: discord.Member, title: Optional[str] = "Администратор Безопасности"):
         if not await self._check_guild_auth(interaction):
             return
 
@@ -123,14 +229,68 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
             await interaction.response.send_message("❌ Только **Высшие Администраторы и Владелец** могут назначать администраторов.", ephemeral=True)
             return
 
-        await db.add_admin(interaction.guild.id, user.id, interaction.user.id)
-        embed = create_security_embed(
-            title="🛡️ НАЗНАЧЕН АДМИНИСТРАТОР БЕЗОПАСНОСТИ",
-            description=f"Пользователь {user.mention} (`{user.id}`) назначен администратором безопасности.\nЕго действия не подлежат откату.",
-            color=COLOR_SUCCESS
+        chosen_title = (title or "Администратор Безопасности").strip()
+
+        view = AdminConfigView(
+            bot=self.bot,
+            guild_id=interaction.guild.id,
+            target_user=user,
+            senior_admin=interaction.user,
+            title=chosen_title,
+            current_perms=["all"],
+            is_edit=False
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        await self.bot.send_security_log(interaction.guild, embed)
+
+        embed = create_security_embed(
+            title="⚙️ Настройка прав Администратора",
+            description=(
+                f"👤 **Кандидат:** {user.mention} (`{user.id}`)\n"
+                f"🏷️ **Должность:** `{chosen_title}`\n\n"
+                f"👇 **Выберите в меню ниже права для администратора и нажмите «Сохранить права»:**"
+            ),
+            color=COLOR_PRIMARY
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @admin_group.command(name="edit", description="Изменить должность или права действующего администратора")
+    @app_commands.describe(user="Администратор", title="Новая должность/префикс (оставьте пустым, чтобы не менять)")
+    async def admin_edit(self, interaction: discord.Interaction, user: discord.Member, title: Optional[str] = None):
+        if not await self._check_guild_auth(interaction):
+            return
+
+        if not is_senior_admin(interaction.user.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Только **Высшие Администраторы и Владелец** могут изменять права администраторов.", ephemeral=True)
+            return
+
+        admin_data = await db.get_admin(interaction.guild.id, user.id)
+        if not admin_data:
+            await interaction.response.send_message(f"❌ Пользователь {user.mention} не найден в списке администраторов базы данных.", ephemeral=True)
+            return
+
+        current_title = title.strip() if (title and title.strip()) else (admin_data.get("title") or "Администратор Безопасности")
+        perms_str = admin_data.get("permissions") or "all"
+        current_perms = ["all"] if perms_str == "all" else [p.strip() for p in perms_str.split(",") if p.strip()]
+
+        view = AdminConfigView(
+            bot=self.bot,
+            guild_id=interaction.guild.id,
+            target_user=user,
+            senior_admin=interaction.user,
+            title=current_title,
+            current_perms=current_perms,
+            is_edit=True
+        )
+
+        embed = create_security_embed(
+            title="⚙️ Редактирование прав Администратора",
+            description=(
+                f"👤 **Администратор:** {user.mention} (`{user.id}`)\n"
+                f"🏷️ **Должность:** `{current_title}`\n\n"
+                f"👇 **Выберите обновленные права в меню ниже и нажмите «Сохранить права»:**"
+            ),
+            color=COLOR_PRIMARY
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @admin_group.command(name="remove", description="Снять статус Администратора Безопасности")
     @app_commands.describe(user="Пользователь")
@@ -154,7 +314,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         else:
             await interaction.response.send_message(f"❌ Пользователь {user.mention} не является администратором.", ephemeral=True)
 
-    @admin_group.command(name="list", description="Показать всех действующих администраторов")
+    @admin_group.command(name="list", description="Показать всех действующих администраторов, их должности и права")
     async def admin_list(self, interaction: discord.Interaction):
         if not await self._check_guild_auth(interaction):
             return
@@ -185,7 +345,15 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
 
         if filtered_admins:
             for a in filtered_admins:
-                lines.append(f"• <@{a['user_id']}> (`ID: {a['user_id']}`)")
+                title = a.get("title") or "Администратор Безопасности"
+                perms_str = a.get("permissions") or "all"
+                if perms_str == "all":
+                    perms_badge = "⭐ *Все права (Full Access)*"
+                else:
+                    perms_list = [p.strip() for p in perms_str.split(",") if p.strip()]
+                    emoji_labels = [f"{AVAILABLE_PERMISSIONS[p]['emoji']} {AVAILABLE_PERMISSIONS[p]['label']}" for p in perms_list if p in AVAILABLE_PERMISSIONS]
+                    perms_badge = ", ".join(emoji_labels) if emoji_labels else "*Базовые права*"
+                lines.append(f"• <@{a['user_id']}> (`ID: {a['user_id']}`)\n  ↳ 🏷️ **{title}** | {perms_badge}")
         else:
             lines.append("*Дополнительных администраторов нет.*")
 

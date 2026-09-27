@@ -9,6 +9,11 @@ COLOR_WARNING = 0xF1C40F    # Yellow / Orange
 COLOR_DANGER = 0xE74C3C     # Red
 COLOR_DARK = 0x1E1F22       # Dark Gray
 
+# FloryMine Signature Orange-Yellow Palette
+COLOR_FLORY_ORANGE = 0xFFA500  # ⚡ FloryMine Signature Vibrant Orange
+COLOR_FLORY_GOLD = 0xFFB703    # ⚡ FloryMine Warm Gold / Yellow
+COLOR_FLORY_AMBER = 0xFB8500   # ⚡ FloryMine Deep Amber
+
 
 def create_security_embed(
     title: str,
@@ -105,13 +110,17 @@ def profile_embed(
     is_senior_admin: bool,
     is_admin: bool,
     is_whitelisted: bool,
-    warnings: List[Dict[str, Any]]
+    warnings: List[Dict[str, Any]],
+    admin_info: Optional[Dict[str, Any]] = None
 ) -> discord.Embed:
     # Determine Highest Security Rank
     if is_owner:
         rank_badge = "👑 **Владелец (Owner)**"
     elif is_senior_admin:
         rank_badge = "💎 **Высший Администратор (Senior Admin)**"
+    elif admin_info and admin_info.get("rank") == "admin":
+        title = admin_info.get("title") or "Администратор Безопасности"
+        rank_badge = f"🛡️ **{title}**"
     elif is_admin:
         rank_badge = "🛡️ **Администратор Безопасности (Security Admin)**"
     elif is_whitelisted:
@@ -129,7 +138,23 @@ def profile_embed(
     embed.add_field(name="🆔 ID Пользователя", value=f"`{member.id}`", inline=True)
     embed.add_field(name="📅 Дата регистрации", value=f"<t:{int(member.created_at.timestamp())}:R>", inline=True)
     embed.add_field(name="📥 Вход на сервер", value=f"<t:{int(member.joined_at.timestamp()) if member.joined_at else 0}:R>", inline=True)
-    embed.add_field(name="🔰 Уровень доступа", value=rank_badge, inline=False)
+    embed.add_field(name="🔰 Уровень доступа / Должность", value=rank_badge, inline=False)
+
+    # Show Granular Permissions for administrators
+    if admin_info and admin_info.get("permissions"):
+        if admin_info.get("is_full"):
+            perms_display = "⭐ **Полный доступ (Все права)**"
+        else:
+            from core.permissions import AVAILABLE_PERMISSIONS
+            perm_lines = []
+            for p in admin_info["permissions"]:
+                if p in AVAILABLE_PERMISSIONS:
+                    meta = AVAILABLE_PERMISSIONS[p]
+                    perm_lines.append(f"• {meta['emoji']} **{meta['label']}**")
+                else:
+                    perm_lines.append(f"• `{p}`")
+            perms_display = "\n".join(perm_lines) if perm_lines else "*Базовые права*"
+        embed.add_field(name="📜 Выданные полномочия", value=perms_display, inline=False)
 
     warn_count = len(warnings)
     status_emoji = "🟢" if warn_count == 0 else ("🟡" if warn_count < 5 else "🔴")
@@ -159,4 +184,61 @@ def profile_embed(
     embed.add_field(name="🎭 Роли", value=roles_str, inline=False)
 
     embed.set_footer(text="FloryGuard Profile System • Данные конфиденциальны")
+    return embed
+
+
+def build_flory_permissions_embed(
+    target: discord.Member,
+    perms_set: set,
+    title: str,
+    is_owner_or_senior: bool = False
+) -> discord.Embed:
+    embed = discord.Embed(
+        title="⚡ Панель настройки прав безопасности • FloryMine",
+        color=COLOR_FLORY_ORANGE,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_thumbnail(url=target.display_avatar.url)
+
+    def status_badge(perm: str) -> str:
+        if is_owner_or_senior or perm in perms_set:
+            return "🟧 **Разрешено**"
+        return "⬛ *Запрещено (Защита)*"
+
+    owner_banner = ""
+    if is_owner_or_senior:
+        owner_banner = "👑 **Владелец сервера / Высшая Администрация**\n*(Обладает безусловным полным доступом ко всем системам защиты)*\n\n"
+
+    desc = (
+        f"{owner_banner}"
+        f"👤 **Сотрудник:** {target.mention} (`{target.name}`)\n"
+        f"🆔 **ID:** `{target.id}`\n"
+        f"🏷️ **Должность:** `{title}`\n"
+        f"🌐 **Сервер:** `⚡ FloryMine ⚡`\n\n"
+        f"**👤 Управление ролями:**\n"
+        f"• Выдача ролей (ПКМ): {status_badge('roles_assign')}\n"
+        f"• Правка ролей: {status_badge('roles_edit')}\n"
+        f"• Создание ролей: {status_badge('roles_create')}\n"
+        f"• Удаление ролей: {status_badge('roles_delete')}\n\n"
+        f"**🔨 Модерация участников:**\n"
+        f"• Блокировка (Бан): {status_badge('ban_members')}\n"
+        f"• Изгнание (Кик): {status_badge('kick_members')}\n"
+        f"• Мут / Таймаут: {status_badge('timeout_members')}\n"
+        f"• Иммунитет AutoMod: {status_badge('automod_bypass')}\n\n"
+        f"**📁 Каналы и категории:**\n"
+        f"• Создание каналов: {status_badge('channels_create')}\n"
+        f"• Правка каналов: {status_badge('channels_edit')}\n"
+        f"• Удаление каналов: {status_badge('channels_delete')}\n\n"
+        f"**⚙️ Сервер и интеграции:**\n"
+        f"• Настройки сервера: {status_badge('server_edit')}\n"
+        f"• Управление вебхуками: {status_badge('webhooks_manage')}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 *Нажимайте на кнопки ниже для переключения разрешений в реальном времени.*"
+    )
+
+    embed.description = desc
+    embed.set_footer(
+        text="⚡ FloryMine ⚡ • FloryGuard Security Matrix",
+        icon_url="https://cdn.discordapp.com/emojis/1069279565509312512.webp?size=96"
+    )
     return embed

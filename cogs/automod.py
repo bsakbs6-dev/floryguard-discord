@@ -3,7 +3,7 @@ from discord.ext import commands
 import time
 import datetime
 
-from core.permissions import is_authorized_guild, is_whitelisted, is_admin
+from core.permissions import is_authorized_guild, is_whitelisted, is_admin, has_permission
 from utils.logger import logger
 from utils.text_scanner import scan_for_links, levenshtein_similarity, normalize_text
 from utils.embeds import automod_alert_embed, create_security_embed, COLOR_WARNING, COLOR_DANGER
@@ -54,8 +54,8 @@ class AutoModCog(commands.Cog, name="AutoMod"):
 
         author = message.author
 
-        # Whitelist and Admins bypass chat filters COMPLETELY (both bots and users!)
-        if await is_whitelisted(guild.id, author.id):
+        # Check granular permission for automod_bypass
+        if await has_permission(guild.id, author.id, "automod_bypass"):
             return
 
         # Extract full content including Rich Embeds
@@ -68,7 +68,7 @@ class AutoModCog(commands.Cog, name="AutoMod"):
         elif hasattr(message, "interaction") and message.interaction:
             trigger_user = getattr(message.interaction, "user", None)
 
-        if trigger_user and await is_whitelisted(guild.id, trigger_user.id):
+        if trigger_user and await has_permission(guild.id, trigger_user.id, "automod_bypass"):
             return
 
         target_member = None
@@ -266,8 +266,8 @@ class AutoModCog(commands.Cog, name="AutoMod"):
         if not is_authorized_guild(guild):
             return
 
-        # Whitelist and Admins bypass chat filters COMPLETELY (both bots and users!)
-        if await is_whitelisted(guild.id, after.author.id):
+        # Check granular permission for automod_bypass
+        if await has_permission(guild.id, after.author.id, "automod_bypass"):
             return
 
         full_text = extract_all_message_text(after)
