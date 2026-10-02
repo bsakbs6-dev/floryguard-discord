@@ -78,17 +78,15 @@ class FloryGuardBot(commands.Bot):
             logger.info(f" - [{status}] {g.name} (ID: {g.id}) | Members: {g.member_count}")
         logger.info(f"==================================================")
 
-        # Sync application commands (Single Source of Truth - No duplicates)
+        # Sync application commands
         try:
-            # 1. Clear any leftover guild-specific commands from all guilds so they don't duplicate
             for g in self.guilds:
-                self.tree.clear_commands(guild=g)
-                await self.tree.sync(guild=g)
-            logger.info("Cleared duplicate guild-level slash commands.")
+                self.tree.copy_global_to(guild=g)
+                synced_guild = await self.tree.sync(guild=g)
+                logger.info(f"Synced {len(synced_guild)} Slash Commands to guild '{g.name}' ({g.id}) instantly.")
 
-            # 2. Sync globally (single copy across Discord)
-            synced = await self.tree.sync()
-            logger.info(f"Synced {len(synced)} Slash Commands globally (clean single registration).")
+            synced_global = await self.tree.sync()
+            logger.info(f"Synced {len(synced_global)} Slash Commands globally.")
         except Exception as e:
             logger.error(f"Error syncing slash commands: {e}")
 

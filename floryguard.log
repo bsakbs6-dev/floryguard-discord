@@ -120,3 +120,37 @@
 [2026-09-16 17:11:35] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.moderation
 [2026-09-16 17:11:35] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.admin_guard
 [2026-09-16 17:11:35] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.transfer
+[2026-09-27 14:49:58] [[32mINFO    [0m] [FloryGuard]: Initializing Database...
+[2026-09-27 14:49:58] [[32mINFO    [0m] [FloryGuard]: Loading Security Cogs...
+[2026-09-27 14:49:58] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.events
+[2026-09-27 14:49:58] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.anti_nuke
+[2026-09-27 14:49:58] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.automod
+[2026-09-27 14:49:58] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.anti_raid
+[2026-09-27 14:49:58] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.moderation
+[2026-09-27 14:49:58] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.admin_guard
+[2026-09-27 14:49:58] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.transfer
+[2026-09-27 14:49:58] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.permissions
+[2026-09-27 14:50:01] [[32mINFO    [0m] [FloryGuard]: ==================================================
+[2026-09-27 14:50:01] [[32mINFO    [0m] [FloryGuard]: 🛡️ FloryGuardBot is ONLINE as FloryGuard#5377 (ID: 1542840899598426192)
+[2026-09-27 14:50:01] [[32mINFO    [0m] [FloryGuard]: Connected to 1 guild(s):
+[2026-09-27 14:50:01] [[32mINFO    [0m] [FloryGuard]:  - [AUTHORIZED] ⚡  FloryMine ⚡ (ID: 1391723885862588486) | Members: 87
+[2026-09-27 14:50:01] [[32mINFO    [0m] [FloryGuard]: ==================================================
+[2026-09-27 14:50:01] [[32mINFO    [0m] [FloryGuard]: Synced 14 Slash Commands to guild '⚡  FloryMine ⚡' (1391723885862588486) instantly.
+[2026-09-27 14:50:01] [[32mINFO    [0m] [FloryGuard]: Synced 14 Slash Commands globally.
+[2026-09-27 14:57:15] [[32mINFO    [0m] [FloryGuard]: Initializing Database...
+[2026-09-27 14:57:15] [[32mINFO    [0m] [FloryGuard]: Loading Security Cogs...
+[2026-09-27 14:57:15] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.events
+[2026-09-27 14:57:15] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.anti_nuke
+[2026-09-27 14:57:15] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.automod
+[2026-09-27 14:57:15] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.anti_raid
+[2026-09-27 14:57:15] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.moderation
+[2026-09-27 14:57:15] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.admin_guard
+[2026-09-27 14:57:15] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.transfer
+[2026-09-27 14:57:15] [[32mINFO    [0m] [FloryGuard]: Loaded Cog: cogs.permissions
+[2026-09-27 14:57:17] [[32mINFO    [0m] [FloryGuard]: ==================================================
+[2026-09-27 14:57:17] [[32mINFO    [0m] [FloryGuard]: 🛡️ FloryGuardBot is ONLINE as FloryGuard#5377 (ID: 1542840899598426192)
+[2026-09-27 14:57:17] [[32mINFO    [0m] [FloryGuard]: Connected to 1 guild(s):
+[2026-09-27 14:57:17] [[32mINFO    [0m] [FloryGuard]:  - [AUTHORIZED] ⚡  FloryMine ⚡ (ID: 1391723885862588486) | Members: 87
+[2026-09-27 14:57:17] [[32mINFO    [0m] [FloryGuard]: ==================================================
+[2026-09-27 14:57:18] [[32mINFO    [0m] [FloryGuard]: Synced 14 Slash Commands to guild '⚡  FloryMine ⚡' (1391723885862588486) instantly.
+[2026-09-27 14:57:18] [[32mINFO    [0m] [FloryGuard]: Synced 14 Slash Commands globally.
