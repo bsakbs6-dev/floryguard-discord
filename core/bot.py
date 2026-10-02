@@ -44,6 +44,7 @@ class FloryGuardBot(commands.Bot):
         self.msg_history = MessageHistoryCache(max_history=5, ttl_seconds=60.0)
         self.raid_tracker = JoinSpikeTracker(threshold=5, window_seconds=5.0)
         self.cross_channel_tracker = CrossChannelSpamTracker(max_channels=3, window_seconds=4.0)
+        self.synced = False
 
     async def setup_hook(self):
         """Called automatically before the bot starts accepting events."""
@@ -79,16 +80,20 @@ class FloryGuardBot(commands.Bot):
         logger.info(f"==================================================")
 
         # Sync application commands
-        try:
-            for g in self.guilds:
-                self.tree.copy_global_to(guild=g)
-                synced_guild = await self.tree.sync(guild=g)
-                logger.info(f"Synced {len(synced_guild)} Slash Commands to guild '{g.name}' ({g.id}) instantly.")
+        if not self.synced:
+            try:
+                # Очищаем локальные команды гильдий, чтобы убрать дубликаты
+                for g in self.guilds:
+                    self.tree.clear_commands(guild=g)
+                    await self.tree.sync(guild=g)
+                    logger.info(f"Cleared duplicate guild commands for '{g.name}' ({g.id}).")
 
-            synced_global = await self.tree.sync()
-            logger.info(f"Synced {len(synced_global)} Slash Commands globally.")
-        except Exception as e:
-            logger.error(f"Error syncing slash commands: {e}")
+                # Регистрируем глобальные команды
+                synced_global = await self.tree.sync()
+                logger.info(f"Synced {len(synced_global)} Slash Commands globally.")
+                self.synced = True
+            except Exception as e:
+                logger.error(f"Error syncing slash commands: {e}")
 
     def get_quarantine_role_id(self, guild_id: int) -> Optional[int]:
         """Fetch configured quarantine role ID for guild."""
