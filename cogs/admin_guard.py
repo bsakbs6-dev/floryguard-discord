@@ -5,7 +5,7 @@ import uuid
 from typing import Optional, Literal
 from datetime import datetime, timezone
 
-from config import UNAUTHORIZED_MESSAGE, AUTHORIZED_GUILDS
+from config import UNAUTHORIZED_MESSAGE, AUTHORIZED_GUILDS, OWNER_IDS, SENIOR_ADMIN_IDS
 from core.permissions import (
     is_authorized_guild,
     is_senior_admin,
@@ -322,25 +322,29 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         admins = await db.get_admins(interaction.guild.id)
         lines = []
 
-        # List global bot owner
-        lines.append("👑 **Создатель/Владелец бота:** <@1398717669607473254>")
+        # List global bot owners
+        for o_id in OWNER_IDS:
+            lines.append(f"👑 **Создатель/Владелец бота:** <@{o_id}>")
 
         # List server specific owner if different from global owner
         guild_owners = AUTHORIZED_GUILDS.get(interaction.guild.id, {}).get("owner_ids", [])
         for o_id in guild_owners:
-            if o_id != 1398717669607473254:
+            if o_id not in OWNER_IDS:
                 lines.append(f"👑 **Владелец сервера:** <@{o_id}>")
 
-        lines.append("💎 **Высший Администратор:** <@1291370925303795733>")
+        # List global senior admins
+        for s_id in SENIOR_ADMIN_IDS:
+            lines.append(f"💎 **Высший Администратор:** <@{s_id}>")
 
         guild_sr = AUTHORIZED_GUILDS.get(interaction.guild.id, {}).get("senior_admin_ids", [])
         for s_id in guild_sr:
-            lines.append(f"⭐ **Высший Администратор сервера:** <@{s_id}>")
+            if s_id not in SENIOR_ADMIN_IDS:
+                lines.append(f"⭐ **Высший Администратор сервера:** <@{s_id}>")
 
         lines.append("\n🛡️ **Назначенные администраторы:**")
 
         # Filter out owners and senior admins from DB appointed list
-        top_ids = {1398717669607473254, 1291370925303795733} | set(guild_owners) | set(guild_sr)
+        top_ids = set(OWNER_IDS) | set(SENIOR_ADMIN_IDS) | set(guild_owners) | set(guild_sr)
         filtered_admins = [a for a in admins if a['user_id'] not in top_ids]
 
         if filtered_admins:

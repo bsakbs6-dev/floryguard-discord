@@ -29,9 +29,9 @@ class TransferCog(commands.Cog, name="Transfer"):
         if not await self._check_guild_auth(interaction):
             return
 
-        # Restrict to specific user ID
-        if interaction.user.id != 1398717669607473254:
-            await interaction.response.send_message("⛔ Эта команда доступна только специальному администратору.", ephemeral=True)
+        # Restrict to bot owner
+        if not is_bot_owner(interaction.user.id, interaction.guild.id):
+            await interaction.response.send_message("⛔ Эта команда доступна только Владельцу бота.", ephemeral=True)
             return
 
         if confirm != "Я ПОДТВЕРЖДАЮ":

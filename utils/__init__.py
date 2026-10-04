@@ -1,5 +1,5 @@
 from .logger import logger
-from .text_scanner import normalize_text, scan_for_links, levenshtein_similarity
+from .text_scanner import normalize_text, scan_for_links, levenshtein_similarity, is_valid_gif_url
 from .embeds import (
     create_security_embed,
     warn_dm_embed,
@@ -17,6 +17,7 @@ __all__ = [
     "logger",
     "normalize_text",
     "scan_for_links",
+    "is_valid_gif_url",
     "levenshtein_similarity",
     "create_security_embed",
     "warn_dm_embed",

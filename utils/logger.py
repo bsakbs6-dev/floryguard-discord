@@ -17,8 +17,11 @@ class ColoredFormatter(logging.Formatter):
 
     def format(self, record):
         color = self.COLORS.get(record.levelno, Fore.WHITE)
-        record.levelname = f"{color}{record.levelname:<8}{Style.RESET_ALL}"
-        return super().format(record)
+        orig_levelname = record.levelname
+        record.levelname = f"{color}{orig_levelname:<8}{Style.RESET_ALL}"
+        formatted = super().format(record)
+        record.levelname = orig_levelname  # Restore original so FileHandler gets clean plain text
+        return formatted
 
 
 def setup_logger(name: str = "FloryGuard", log_file: str = "floryguard.log") -> logging.Logger:

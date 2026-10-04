@@ -254,7 +254,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
                         ow = ch.overwrites_for(everyone)
                         if ow.send_messages is not False:
                             ow.send_messages = False
-                            await ch.set_permissions(ow, reason=f"FloryGuard Server Lockdown by {interaction.user}")
+                            await ch.set_permissions(everyone, overwrite=ow, reason=f"FloryGuard Server Lockdown by {interaction.user}")
                             count += 1
                     except Exception:
                         pass
@@ -301,7 +301,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
                         ow = ch.overwrites_for(everyone)
                         if ow.send_messages is False:
                             ow.send_messages = None
-                            await ch.set_permissions(ow, reason=f"FloryGuard Server Unlock by {interaction.user}")
+                            await ch.set_permissions(everyone, overwrite=ow, reason=f"FloryGuard Server Unlock by {interaction.user}")
                             count += 1
                     except Exception:
                         pass

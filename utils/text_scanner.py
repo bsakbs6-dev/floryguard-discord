@@ -1,5 +1,6 @@
 import re
 import unicodedata
+import urllib.parse
 from typing import Tuple, Optional
 
 
@@ -101,10 +102,78 @@ def deobfuscate_leetspeak(text: str) -> str:
     return ''.join(chars)
 
 
+def is_valid_gif_url(raw_url: str) -> bool:
+    """
+    Strictly validates if a URL is a legitimate GIF animation from trusted GIF providers.
+    Prevents advertising bypasses (e.g. adding '.gif' to arbitrary links or query params).
+    Only whitelisted media hosts with verified path formats are permitted.
+    """
+    if not raw_url:
+        return False
+
+    url = raw_url.strip().rstrip('.,!?:;)"\'>]')
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except Exception:
+        return False
+
+    # Block userinfo tricks (e.g. https://tenor.com@evil.com)
+    if parsed.username or parsed.password:
+        return False
+
+    hostname = (parsed.hostname or '').lower().rstrip('.')
+    if not hostname:
+        return False
+
+    # Standard web ports only
+    if parsed.port and parsed.port not in (80, 443):
+        return False
+
+    # Prevent IDN homoglyph spoofing in domain
+    if hostname.startswith('xn--') or any(ord(c) > 127 for c in hostname):
+        return False
+
+    path = parsed.path
+
+    # 1. Tenor (Discord default GIF platform)
+    if hostname in ('tenor.com', 'www.tenor.com'):
+        return bool(re.match(r'^/(?:view/[a-zA-Z0-9\-_%]+|b/[a-zA-Z0-9\-_%]+)', path))
+    if hostname in ('media.tenor.com', 'c.tenor.com'):
+        return path.lower().endswith(('.gif', '.mp4', '.webm', '.gifv')) or bool(re.match(r'^/m/[a-zA-Z0-9\-_%]+', path))
+
+    # 2. Giphy
+    if hostname in ('giphy.com', 'www.giphy.com'):
+        return bool(re.match(r'^/(?:gifs|clips|media)/[a-zA-Z0-9\-_%]+', path))
+    if hostname in ('media.giphy.com', 'i.giphy.com') or (hostname.endswith('.giphy.com') and bool(re.match(r'^media\d+\.giphy\.com$', hostname))):
+        return path.lower().endswith(('.gif', '.mp4', '.webp', '.gifv')) or bool(re.match(r'^/media/[a-zA-Z0-9\-_%]+', path))
+
+    # 3. Klipy (Discord GIF integration)
+    if hostname in ('klipy.com', 'www.klipy.com'):
+        return bool(re.match(r'^/(?:gifs?|clips?|memes?)/[a-zA-Z0-9\-_%]+', path))
+    if hostname in ('media.klipy.com', 'static.klipy.com'):
+        return path.lower().endswith(('.gif', '.mp4', '.webp', '.gifv'))
+
+    # 4. Discord CDN / Media Proxy (attachments / emojis / stickers ending strictly in .gif/.gifv)
+    if hostname in ('cdn.discordapp.com', 'media.discordapp.net'):
+        if path.startswith(('/attachments/', '/emojis/', '/stickers/')):
+            return path.lower().endswith(('.gif', '.gifv'))
+        return False
+
+    # 5. Imgur (Direct GIFs only, not albums or user profiles)
+    if hostname == 'i.imgur.com':
+        return bool(re.match(r'^/[a-zA-Z0-9]{4,12}\.(?:gif|gifv)$', path.lower()))
+
+    return False
+
+
 def scan_for_links(text: str) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Scans text for prohibited links, phishing, invites, IPs, and shorteners.
     Returns: (is_malicious, match_type, matched_string)
+    Legitimate GIFs from verified platforms are allowed.
     """
     if not text:
         return False, None, None
@@ -132,38 +201,43 @@ def scan_for_links(text: str) -> Tuple[bool, Optional[str], Optional[str]]:
     if short_match:
         return True, "Сокращатель ссылок", short_match.group(0)
 
-    # 5. Check for Any Link / URL
-    gen_match = GENERAL_URL_REGEX.search(text) or GENERAL_URL_REGEX.search(cleaned)
-    if gen_match:
-        return True, "Сторонняя веб-ссылка / Реклама", gen_match.group(0)
+    # 5. Check for Any Link / URL (with GIF whitelist verification)
+    # Check all URLs in original text only (avoids false-positives from homoglyph transliteration)
+    for gen_match in GENERAL_URL_REGEX.finditer(text):
+        matched_url = gen_match.group(0)
+        if not is_valid_gif_url(matched_url):
+            return True, "Сторонняя веб-ссылка / Реклама", matched_url
 
     return False, None, None
 
 
 def levenshtein_similarity(s1: str, s2: str) -> float:
-    """Compute Levenshtein distance ratio between 0.0 and 1.0."""
+    """Fast length-bounded Levenshtein similarity ratio to prevent Event Loop DoS."""
     s1, s2 = s1.lower(), s2.lower()
     if s1 == s2:
         return 1.0
     if not s1 or not s2:
         return 0.0
-
     len1, len2 = len(s1), len(s2)
-    dp = [[0] * (len2 + 1) for _ in range(len1 + 1)]
-
-    for i in range(len1 + 1):
-        dp[i][0] = i
-    for j in range(len2 + 1):
-        dp[0][j] = j
-
-    for i in range(1, len1 + 1):
-        for j in range(1, len2 + 1):
-            cost = 0 if s1[i - 1] == s2[j - 1] else 1
-            dp[i][j] = min(
-                dp[i - 1][j] + 1,        # deletion
-                dp[i][j - 1] + 1,        # insertion
-                dp[i - 1][j - 1] + cost  # substitution
-            )
-
     max_len = max(len1, len2)
-    return 1.0 - (dp[len1][len2] / max_len)
+    # Fast pruning: если разница в длинах превышает 15%, схожесть не может быть >= 0.85
+    if abs(len1 - len2) / max_len > 0.15:
+        return 0.0
+    # Защита от DoS: ограничиваем расчет первыми 250 символами
+    if max_len > 250:
+        s1 = s1[:250]
+        s2 = s2[:250]
+        len1, len2 = len(s1), len(s2)
+        max_len = max(len1, len2)
+    dp = list(range(len2 + 1))
+    for i in range(1, len1 + 1):
+        prev = dp[0]
+        dp[0] = i
+        c1 = s1[i - 1]
+        for j in range(1, len2 + 1):
+            temp = dp[j]
+            cost = 0 if c1 == s2[j - 1] else 1
+            dp[j] = min(dp[j] + 1, dp[j - 1] + 1, prev + cost)
+            prev = temp
+    return 1.0 - (dp[len2] / max_len)
+

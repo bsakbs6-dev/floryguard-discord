@@ -16,8 +16,6 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     """
     def __init__(self, bot):
         self.bot = bot
-        # Debounce/lock cache to prevent duplicate audit log triggers
-        self._processed_events = set()
 
     async def _get_audit_executor(
         self,
@@ -195,7 +193,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await has_permission(guild.id, executor.id, "channels_manage"):
+        if await has_permission(guild.id, executor.id, "channels_delete"):
             return
 
         logger.warning(f"UNAUTHORIZED CHANNEL DELETE in {guild.name} by {executor.name} ({executor.id}): #{channel.name}")
@@ -273,7 +271,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await has_permission(guild.id, executor.id, "channels_manage"):
+        if await has_permission(guild.id, executor.id, "channels_create"):
             return
 
         logger.warning(f"UNAUTHORIZED CHANNEL CREATE in {guild.name} by {executor.name}: #{channel.name}")
@@ -331,7 +329,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await has_permission(guild.id, executor.id, "channels_manage"):
+        if await has_permission(guild.id, executor.id, "channels_edit"):
             return
 
         logger.warning(f"UNAUTHORIZED CHANNEL UPDATE in {guild.name} by {executor.name}: #{after.name}")
@@ -388,7 +386,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await has_permission(guild.id, executor.id, "roles_edit"):
+        if await has_permission(guild.id, executor.id, "roles_delete"):
             return
 
         logger.warning(f"UNAUTHORIZED ROLE DELETE in {guild.name} by {executor.name}: @{role.name}")
@@ -444,7 +442,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if not executor or executor.id == self.bot.user.id:
             return
 
-        if await has_permission(guild.id, executor.id, "roles_edit"):
+        if await has_permission(guild.id, executor.id, "roles_create"):
             return
 
         logger.warning(f"UNAUTHORIZED ROLE CREATE in {guild.name} by {executor.name}: @{role.name}")

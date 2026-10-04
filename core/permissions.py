@@ -166,16 +166,6 @@ async def has_permission(guild_id: int, user_id: int, permission: str) -> bool:
         if permission in perms_list:
             return True
 
-        # Fallback mappings for backwards-compatibility
-        if permission in ("channels_create", "channels_edit", "channels_delete") and "channels_manage" in perms_list:
-            return True
-        if permission in ("roles_create", "roles_delete") and "roles_edit" in perms_list:
-            return True
-        if permission == "channels_manage" and any(p in perms_list for p in ("channels_create", "channels_edit", "channels_delete")):
-            return True
-        if permission == "roles_edit" and any(p in perms_list for p in ("roles_create", "roles_delete")):
-            return True
-
     if await db.is_whitelisted(guild_id, user_id):
         if permission in ("automod_bypass",):
             return True

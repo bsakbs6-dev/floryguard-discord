@@ -14,6 +14,8 @@ COLOR_FLORY_ORANGE = 0xFFA500  # ⚡ FloryMine Signature Vibrant Orange
 COLOR_FLORY_GOLD = 0xFFB703    # ⚡ FloryMine Warm Gold / Yellow
 COLOR_FLORY_AMBER = 0xFB8500   # ⚡ FloryMine Deep Amber
 
+DEFAULT_FOOTER_ICON = "https://cdn.discordapp.com/embed/avatars/0.png"
+
 
 def create_security_embed(
     title: str,
@@ -27,7 +29,7 @@ def create_security_embed(
         color=color,
         timestamp=datetime.now(timezone.utc)
     )
-    embed.set_footer(text=footer, icon_url="https://cdn.discordapp.com/emojis/1069279565509312512.webp?size=96")
+    embed.set_footer(text=footer, icon_url=DEFAULT_FOOTER_ICON)
     return embed
 
 
@@ -43,7 +45,7 @@ def warn_dm_embed(warn_count: int, max_warns: int = 5, reason: str = "Несан
         color=COLOR_WARNING if warn_count < max_warns else COLOR_DANGER,
         timestamp=datetime.now(timezone.utc)
     )
-    embed.set_footer(text="FloryGuard Security Bot", icon_url="https://cdn.discordapp.com/emojis/1069279565509312512.webp?size=96")
+    embed.set_footer(text="FloryGuard Security Bot", icon_url=DEFAULT_FOOTER_ICON)
     return embed
 
 
@@ -74,7 +76,7 @@ def anti_nuke_alert_embed(
         else:
             embed.add_field(name="⚡ Санкция", value=f"🟡 **Предупреждение {warn_count}/5** (Откат + Уведомление в ЛС)", inline=False)
 
-    embed.set_footer(text="FloryGuard Audit System", icon_url="https://cdn.discordapp.com/emojis/1069279565509312512.webp?size=96")
+    embed.set_footer(text="FloryGuard Audit System", icon_url=DEFAULT_FOOTER_ICON)
     return embed
 
 
@@ -100,7 +102,7 @@ def automod_alert_embed(
     embed.add_field(name="📝 Содержимое", value=f"```{safe_content}```", inline=False)
     embed.add_field(name="⚙️ Действие", value=f"✅ {action}", inline=True)
 
-    embed.set_footer(text="FloryGuard AutoMod", icon_url="https://cdn.discordapp.com/emojis/1069279565509312512.webp?size=96")
+    embed.set_footer(text="FloryGuard AutoMod", icon_url=DEFAULT_FOOTER_ICON)
     return embed
 
 
@@ -239,6 +241,6 @@ def build_flory_permissions_embed(
     embed.description = desc
     embed.set_footer(
         text="⚡ FloryMine ⚡ • FloryGuard Security Matrix",
-        icon_url="https://cdn.discordapp.com/emojis/1069279565509312512.webp?size=96"
+        icon_url=DEFAULT_FOOTER_ICON
     )
     return embed
