@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="ru" class="scroll-smooth dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no, viewport-fit=cover">
+  <title>FloryMine — Официальный автодонат-магазин сервера Майнкрафт</title>
+  
+  <!-- Favicons & App Icons -->
+  <link rel="icon" type="image/png" sizes="32x32" href="images/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="images/favicon-16.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="images/favicon-192.png">
+  <link rel="shortcut icon" href="favicon.ico">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Solar Icons via Iconify CDN (solar-icons.vercel.app) -->
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Canvas Confetti -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+  
+  <!-- Fonts: Fontshare (Cabinet Grotesk & Satoshi) + Google Fonts (Unbounded & Plus Jakarta Sans & JetBrains Mono) -->
+  <link rel="preconnect" href="https://api.fontshare.com">
+  <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,700,600,500,400&f[]=satoshi@700,500,400&display=swap">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css?v=6.0">
+  
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            flory: {
+              glow: '#f59e0b',
+              gold: '#fbbf24',
+              orange: '#f97316',
+              dark: '#07090e'
+            }
+          },
+          fontFamily: {
+            display: ['Cabinet Grotesk', 'Unbounded', 'sans-serif'],
+            brand: ['Unbounded', 'sans-serif'],
+            sans: ['Plus Jakarta Sans', 'Satoshi', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace']
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-[#07090e] text-gray-100 font-sans antialiased selection:bg-amber-500 selection:text-black min-h-screen flex flex-col relative w-full overflow-x-hidden">
+
+  <!-- Background decorative royal castle & glowing orbs -->
+  <div class="fixed inset-0 pointer-events-none z-0 overflow-hidden w-full h-full">
+    <!-- Royal Castle Wallpaper Layer -->
+    <div class="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-[0.32] scale-100" style="background-image: url('images/bg-royal.jpg'); filter: saturate(1.2) brightness(0.85);"></div>
+    
+    <!-- Deep Royal Vignette & Atmosphere Overlays -->
+    <div class="absolute inset-0 bg-gradient-to-b from-[#07090e]/90 via-[#07090e]/80 to-[#07090e]/95"></div>
+    <div class="absolute inset-0 bg-[radial-gradient(ellipse_90%_70%_at_50%_0%,rgba(245,158,11,0.18),transparent_70%)]"></div>
+    <div class="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,rgba(249,115,22,0.06),transparent_65%)]"></div>
+
+    <!-- Glowing Royal Light Orbs (shadcn-inspired ambient spotlights) -->
+    <div class="absolute top-[-10%] left-1/2 -translate-x-1/2 w-[90vw] max-w-[750px] h-[420px] bg-gradient-to-b from-amber-500/20 via-orange-500/10 to-transparent blur-[130px] rounded-full"></div>
+    <div class="absolute top-[40%] right-[-10%] w-[80vw] max-w-[450px] h-[450px] bg-yellow-600/10 blur-[140px] rounded-full"></div>
+    <div class="absolute top-[75%] left-[-10%] w-[80vw] max-w-[450px] h-[450px] bg-amber-600/10 blur-[140px] rounded-full"></div>
+
+    <!-- Subtle Grid & Embers -->
+    <div class="bg-grid-pattern absolute inset-0 opacity-[0.035]"></div>
+    <div class="royal-embers absolute inset-0"></div>
+  </div>
+
+  <!-- FLOATING GLASS HEADER (shadcn / 21st.dev style) -->
+  <header class="sticky top-0 z-40 backdrop-blur-2xl bg-[#080b12]/85 border-b border-white/[0.08] shadow-[0_4px_30px_rgba(0,0,0,0.7)] w-full transition-all">
+    <div class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 sm:h-20 flex items-center justify-between">
+      
+      <!-- Logo with rounded Avatar & ambient glow -->
+      <a href="#" class="flex items-center gap-2.5 sm:gap-3.5 group">
+        <div class="relative w-9 h-9 sm:w-11 sm:h-11 rounded-full p-[2px] bg-gradient-to-tr from-amber-500 via-yellow-400 to-amber-600 shadow-[0_0_20px_rgba(245,158,11,0.45)] group-hover:scale-105 transition-transform">
+          <img src="images/logo.png" alt="FloryMine Logo" class="w-full h-full object-cover rounded-full bg-[#0d131f]">
+          <div class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 sm:w-3 sm:h-3 bg-emerald-400 rounded-full border-2 border-[#090d16] animate-pulse"></div>
+        </div>
+        <div>
+          <div class="font-brand font-black text-base sm:text-xl tracking-wider text-white flex items-center gap-1">
+            FLORY<span class="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-yellow-300">MINE</span>
+          </div>
+          <p class="hidden sm:block text-[11px] text-gray-400 font-medium tracking-wide">Анархия 1.21.x • Официальный магазин</p>
+        </div>
+      </a>
+
+      <!-- Desktop Navigation (shadcn segmented pill style) -->
+      <nav class="hidden md:flex items-center gap-1 bg-zinc-900/70 p-1 rounded-full border border-white/[0.08] backdrop-blur-md">
+        <a href="#store" class="px-4 py-2 text-xs sm:text-sm font-semibold text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded-full shadow-sm transition flex items-center gap-1.5 hover:text-white">
+          <iconify-icon icon="solar:bag-heart-bold-duotone" class="text-amber-400 text-base"></iconify-icon>
+          <span>Магазин</span>
+        </a>
+        <a href="#bonus" class="px-4 py-2 text-xs sm:text-sm font-semibold text-gray-300 hover:text-amber-300 rounded-full transition flex items-center gap-1.5">
+          <iconify-icon icon="solar:gift-bold-duotone" class="text-yellow-400 text-base"></iconify-icon>
+          <span>Бонус</span>
+        </a>
+        <a href="#why-us" class="px-4 py-2 text-xs sm:text-sm font-semibold text-gray-300 hover:text-amber-300 rounded-full transition flex items-center gap-1.5">
+          <iconify-icon icon="solar:star-fall-2-bold-duotone" class="text-amber-400 text-base"></iconify-icon>
+          <span>Гарантии</span>
+        </a>
+        <a href="#privileges" class="px-4 py-2 text-xs sm:text-sm font-semibold text-gray-300 hover:text-white rounded-full transition flex items-center gap-1.5">
+          <iconify-icon icon="solar:shield-check-bold-duotone" class="text-orange-400 text-base"></iconify-icon>
+          <span>Сравнение прав</span>
+        </a>
+        <a href="/rules" class="px-4 py-2 text-xs sm:text-sm font-semibold text-gray-300 hover:text-white rounded-full transition">
+          Правила
+        </a>
+      </nav>
+
+      <!-- Server IP & Live Online Player Counter (21st.dev interactive widget) -->
+      <div class="flex items-center gap-2 sm:gap-3">
+        <button id="soundToggleBtn" onclick="toggleAudio()" class="p-2 sm:p-2.5 rounded-xl bg-zinc-900/80 border border-white/[0.08] text-gray-400 hover:text-amber-400 hover:border-amber-500/40 transition active:scale-95" title="Звуки">
+          <i id="soundIcon" data-lucide="volume-2" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+        </button>
+
+        <div onclick="copyServerIP()" class="cursor-pointer group relative flex items-center gap-2 sm:gap-3 bg-gradient-to-r from-amber-950/30 via-zinc-900/80 to-zinc-900/90 border border-amber-500/30 hover:border-amber-400/70 px-2.5 py-1.5 sm:px-4 sm:py-2 rounded-xl sm:rounded-2xl transition-all shadow-[0_0_20px_rgba(245,158,11,0.2)] active:scale-95 ring-1 ring-inset ring-white/[0.06]">
+          <div class="text-left">
+            <div class="text-[9px] sm:text-[10px] text-amber-400 uppercase font-bold tracking-wider flex items-center gap-1.5">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              <span class="text-gray-400">Онлайн:</span>
+              <span id="headerOnline" class="text-emerald-300 font-mono font-black">...</span>
+              <span class="hidden sm:inline-block px-1.5 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[9px] font-mono">20 TPS</span>
+            </div>
+            <div class="font-mono text-[11px] sm:text-xs font-bold text-gray-200 tracking-wide group-hover:text-amber-300 transition flex items-center gap-1.5">
+              <span id="serverIpText">mc.florymine.fun</span>
+              <iconify-icon icon="solar:copy-bold-duotone" class="text-gray-400 group-hover:text-amber-400 text-sm"></iconify-icon>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- LIVE PURCHASES TICKER (Gliding Infinite Marquee with gradient masks) -->
+  <div class="bg-[#080b12] border-b border-white/[0.06] py-2 overflow-hidden relative z-20 w-full">
+    <div class="max-w-7xl mx-auto px-3 sm:px-4 flex items-center gap-3">
+      <div class="flex items-center gap-1.5 pr-2.5 sm:pr-3.5 border-r border-white/10 font-brand text-[10px] sm:text-xs font-bold text-amber-400 uppercase tracking-wider shrink-0">
+        <span class="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+        <iconify-icon icon="solar:fire-bold-duotone" class="text-amber-400 text-sm"></iconify-icon>
+        <span class="hidden sm:inline">Лента покупок:</span>
+      </div>
+      
+      <!-- Infinite Smooth Gliding Marquee -->
+      <div class="ticker-wrapper flex-1">
+        <div id="recentPurchasesTicker" class="ticker-track">
+          <!-- Injected via JavaScript -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HERO SECTION (Bento Grid layout + 21st.dev style) -->
+  <section class="relative pt-4 sm:pt-10 pb-6 sm:pb-10 z-10 w-full overflow-hidden">
+    <div class="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8">
+      
+      <div class="relative overflow-hidden rounded-2xl sm:rounded-3xl bg-gradient-to-r from-amber-950/60 via-zinc-950/95 to-orange-950/50 border border-amber-500/25 p-4 sm:p-10 mb-6 sm:mb-8 shadow-[0_0_50px_rgba(245,158,11,0.15)] backdrop-blur-xl">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-8 items-center">
+          
+          <!-- Left Hero Banner -->
+          <div class="lg:col-span-7 space-y-3.5 sm:space-y-6 text-center lg:text-left">
+            <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] sm:text-xs font-bold uppercase tracking-wider shadow-inner">
+              <iconify-icon icon="solar:sparkles-bold-duotone" class="text-amber-400 text-sm animate-pulse"></iconify-icon>
+              <span>Официальный магазин сервера FloryMine</span>
+            </div>
+            
+            <h1 class="text-2xl sm:text-4xl lg:text-5xl font-black font-display tracking-tight text-white leading-[1.12]">
+              Стань лидером на сервере <span class="text-transparent bg-clip-text bg-gradient-to-r from-amber-400 via-yellow-300 to-orange-400">FloryMine</span>
+            </h1>
+
+            <p class="text-gray-300 text-xs sm:text-sm sm:leading-relaxed max-w-xl mx-auto lg:mx-0">
+              Моментальная выдача прав и предметов в игре через серверный сокет. Защищённая оплата через 
+              <strong class="text-amber-300">Robokassa</strong> по СБП и картам без скрытых комиссий.
+            </p>
+
+            <div class="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-2.5 sm:gap-3.5 pt-1">
+              <a href="#store" class="shimmer-btn w-full sm:w-auto px-7 py-3.5 sm:py-4 rounded-xl sm:rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-yellow-500 hover:from-amber-400 hover:to-orange-400 text-black font-brand font-black text-xs sm:text-sm tracking-wide shadow-[0_0_25px_rgba(245,158,11,0.4)] transition active:scale-95 flex items-center justify-center gap-2">
+                <iconify-icon icon="solar:bolt-bold-duotone" class="text-black text-base"></iconify-icon>
+                <span>Выбрать донат</span>
+              </a>
+              <a href="#privileges" class="w-full sm:w-auto px-6 py-3.5 sm:py-4 rounded-xl sm:rounded-2xl bg-zinc-900/90 hover:bg-zinc-800 border border-white/10 text-gray-200 font-brand font-bold text-xs sm:text-sm tracking-wide transition active:scale-95 flex items-center justify-center gap-2">
+                <iconify-icon icon="solar:shield-check-bold-duotone" class="text-amber-400 text-base"></iconify-icon>
+                <span>Сравнение прав</span>
+              </a>
+            </div>
+
+            <!-- Micro Metrics Bar with 3D icons -->
+            <div class="grid grid-cols-3 gap-2 sm:gap-4 pt-3 sm:pt-4 border-t border-white/[0.08] text-left">
+              <div class="flex items-center gap-2 sm:gap-2.5">
+                <img src="images/3d-flash.png" alt="Flash" class="w-6 h-6 sm:w-8 sm:h-8 object-contain shrink-0 drop-shadow">
+                <div class="text-[10px] sm:text-xs">
+                  <div class="font-bold text-white leading-tight">Выдача 3-5с</div>
+                  <div class="text-gray-400 text-[9px] sm:text-[10px]">Автоматически</div>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 sm:gap-2.5">
+                <img src="images/3d-lock.png" alt="Lock" class="w-6 h-6 sm:w-8 sm:h-8 object-contain shrink-0 drop-shadow">
+                <div class="text-[10px] sm:text-xs">
+                  <div class="font-bold text-white leading-tight">100% Защита</div>
+                  <div class="text-gray-400 text-[9px] sm:text-[10px]">Robokassa PCI DSS</div>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 sm:gap-2.5">
+                <img src="images/3d-trophy.png" alt="Trophy" class="w-6 h-6 sm:w-8 sm:h-8 object-contain shrink-0 drop-shadow">
+                <div class="text-[10px] sm:text-xs">
+                  <div class="font-bold text-white leading-tight">Навсегда</div>
+                  <div class="text-gray-400 text-[9px] sm:text-[10px]">Без сгорания прав</div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Right: DAILY BONUS BENTO CARD with 3D Render & Dynamic Head Preview -->
+          <div id="bonus" class="lg:col-span-5">
+            <div class="modern-card rounded-2xl sm:rounded-3xl p-5 sm:p-7 shadow-[0_0_35px_rgba(245,158,11,0.18)] relative max-w-md mx-auto overflow-hidden">
+              
+              <div class="text-center pb-3 border-b border-white/[0.08]">
+                <span class="px-3.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 font-brand text-[10px] sm:text-xs uppercase font-bold tracking-wider inline-flex items-center gap-1.5 shadow-sm">
+                  <iconify-icon icon="solar:gift-bold-duotone" class="text-yellow-400 text-sm"></iconify-icon>
+                  <span>Ежедневный Бонус</span>
+                </span>
+                <p class="text-[11px] sm:text-xs text-gray-300 mt-1.5 font-medium">Бесплатные награды в игре каждые 24 часа!</p>
+              </div>
+
+              <!-- 3D Gift Visual Box with floating animation -->
+              <div class="my-4 flex flex-col items-center justify-center">
+                <div class="relative group cursor-pointer" onclick="document.getElementById('bonusNicknameInput').focus()">
+                  <div class="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-gradient-to-b from-amber-500/20 via-orange-500/10 to-transparent border border-amber-500/40 p-2 shadow-[0_0_30px_rgba(245,158,11,0.3)] flex items-center justify-center overflow-hidden group-hover:scale-105 transition-transform">
+                    <img src="images/3d-gift.png" alt="3D Gift Box" class="w-20 h-20 sm:w-24 sm:h-24 object-contain animate-float drop-shadow-[0_10px_20px_rgba(245,158,11,0.35)]">
+                  </div>
+                  <div class="absolute -bottom-2.5 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-black text-[9px] font-brand font-black uppercase shadow-lg tracking-wider whitespace-nowrap">
+                    БЕСПЛАТНО
+                  </div>
+                </div>
+              </div>
+
+              <!-- Bonus Input & Live Minecraft Head Preview -->
+              <div class="space-y-2.5 pt-1">
+                <div class="relative">
+                  <div class="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-md bg-zinc-900 border border-white/10 overflow-hidden flex items-center justify-center">
+                    <img id="bonusAvatarHead" src="images/logo.png" alt="Skin Head" class="w-full h-full object-cover">
+                  </div>
+                  <input type="text" id="bonusNicknameInput" oninput="onBonusNicknameInput(this)" placeholder="Напишите свой игровой ник" 
+                    class="w-full pl-11 pr-3 py-2.5 sm:py-3 bg-zinc-950/90 border border-zinc-700/80 focus:border-amber-400 rounded-xl text-white text-xs sm:text-sm font-semibold outline-none transition placeholder:text-gray-500">
+                </div>
+                
+                <button onclick="claimDailyBonus()" id="claimBonusBtn" class="shimmer-btn w-full py-3 sm:py-3.5 rounded-xl sm:rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-brand font-black text-xs sm:text-sm tracking-wide shadow-[0_0_20px_rgba(245,158,11,0.35)] transition flex items-center justify-center gap-1.5 active:scale-95">
+                  <iconify-icon icon="solar:gift-bold-duotone" class="text-black text-base"></iconify-icon>
+                  <span>Получить бонус</span>
+                </button>
+
+                <div id="bonusStatusMsg" class="hidden text-[11px] sm:text-xs text-center p-2 rounded-xl font-medium leading-relaxed"></div>
+
+                <!-- Conditions note -->
+                <div class="pt-2 border-t border-white/[0.08] space-y-1 text-[10px] text-gray-400">
+                  <div class="flex items-center gap-1.5">
+                    <iconify-icon icon="solar:check-circle-bold-duotone" class="text-amber-400 text-sm shrink-0"></iconify-icon>
+                    <span>1 раз в 24 часа для 1 игрока (1 IP = 1 ник)</span>
+                  </div>
+                  <div class="flex items-center gap-1.5 text-amber-300 font-semibold">
+                    <iconify-icon icon="solar:info-circle-bold-duotone" class="text-amber-400 text-sm shrink-0"></iconify-icon>
+                    <span>Вы должны быть онлайн на сервере!</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- FEATURES BENTO GRID (Inspired by 21st.dev & shadcn/ui) -->
+  <section id="why-us" class="py-6 sm:py-10 relative z-10 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 w-full overflow-hidden">
+    <div class="text-center max-w-2xl mx-auto mb-6 sm:mb-10">
+      <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] sm:text-xs font-bold uppercase tracking-wider mb-2">
+        <iconify-icon icon="solar:verified-check-bold" class="text-amber-400 text-sm"></iconify-icon>
+        <span>Надёжность и качество</span>
+      </div>
+      <h2 class="text-2xl sm:text-3xl lg:text-4xl font-black font-display text-white tracking-tight">
+        Почему игроки выбирают FloryMine
+      </h2>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-5">
+      
+      <!-- Bento Tile 1 -->
+      <div class="modern-card rounded-2xl p-5 sm:p-6 flex flex-col justify-between group">
+        <div>
+          <div class="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+            <img src="images/3d-flash.png" alt="Speed" class="w-8 h-8 object-contain">
+          </div>
+          <h3 class="font-display font-bold text-base sm:text-lg text-white mb-1.5">Выдача до 5 секунд</h3>
+          <p class="text-xs text-gray-400 leading-relaxed">
+            Благодаря кастомным плагинам сервера, выдача доната занимает до 5 секунд прямо во время игры. Никаких задержек и перезаходов — всё активируется моментально.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-white/[0.06] text-[11px] font-mono font-bold text-amber-400 flex items-center gap-1">
+          <span>Мгновенная доставка</span>
+        </div>
+      </div>
+
+      <!-- Bento Tile 2 -->
+      <div class="modern-card rounded-2xl p-5 sm:p-6 flex flex-col justify-between group">
+        <div>
+          <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+            <img src="images/3d-lock.png" alt="Security" class="w-8 h-8 object-contain">
+          </div>
+          <h3 class="font-display font-bold text-base sm:text-lg text-white mb-1.5">Защита Robokassa</h3>
+          <p class="text-xs text-gray-400 leading-relaxed">
+            Сертифицированный шлюз PCI DSS Level 1. Оплата по СБП, любым картам РФ, кошелькам и криптовалюте.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-white/[0.06] text-[11px] font-mono font-bold text-emerald-400 flex items-center gap-1">
+          <span>Безопасный эквайринг</span>
+        </div>
+      </div>
+
+      <!-- Bento Tile 3 -->
+      <div class="modern-card rounded-2xl p-5 sm:p-6 flex flex-col justify-between group">
+        <div>
+          <div class="w-12 h-12 rounded-xl bg-yellow-500/10 border border-yellow-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+            <img src="images/3d-trophy.png" alt="Trophy" class="w-8 h-8 object-contain">
+          </div>
+          <h3 class="font-display font-bold text-base sm:text-lg text-white mb-1.5">Несгораемый статус</h3>
+          <p class="text-xs text-gray-400 leading-relaxed">
+            Все возможности и привилегии навсегда закрепляются за вашим ником. Никакие вайпы игрового мира, сезоны и обновления сервера не аннулируют ваш донат.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-white/[0.06] text-[11px] font-mono font-bold text-yellow-400 flex items-center gap-1">
+          <span>Сохранение при вайпах</span>
+        </div>
+      </div>
+
+      <!-- Bento Tile 4 -->
+      <div class="modern-card rounded-2xl p-5 sm:p-6 flex flex-col justify-between group">
+        <div>
+          <div class="w-12 h-12 rounded-xl bg-orange-500/10 border border-orange-500/30 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+            <img src="images/3d-star.png" alt="Support" class="w-8 h-8 object-contain">
+          </div>
+          <h3 class="font-display font-bold text-base sm:text-lg text-white mb-1.5">Поддержка 24/7</h3>
+          <p class="text-xs text-gray-400 leading-relaxed">
+            Отзывчивая администрация и тикет-система в Discord и Telegram. Любой вопрос решается за пару минут.
+          </p>
+        </div>
+        <div class="mt-4 pt-3 border-t border-white/[0.06] text-[11px] font-mono font-bold text-orange-400 flex items-center gap-1">
+          <span>dsc.gg/florymine</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- STORE CATALOG -->
+  <section id="store" class="py-6 sm:py-12 relative z-10 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 w-full overflow-hidden">
+    <div class="flex flex-col lg:flex-row lg:items-end justify-between gap-4 sm:gap-6 mb-5 sm:mb-8">
+      <div>
+        <div class="text-[11px] sm:text-xs font-bold uppercase tracking-widest text-amber-400 flex items-center gap-1.5 mb-1.5">
+          <iconify-icon icon="solar:crown-bold-duotone" class="text-yellow-400 text-sm"></iconify-icon>
+          <span>Каталог товаров</span>
+          <span class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+        </div>
+        <h2 class="text-2xl sm:text-3xl lg:text-4xl font-black font-display text-white tracking-tight">
+          Привилегии и Услуги
+        </h2>
+      </div>
+
+      <!-- Search & Filters Container (Watermelon UI / shadcn style) -->
+      <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full lg:w-auto">
+        <!-- Instant Search Box -->
+        <div class="relative w-full sm:w-60 md:w-68">
+          <iconify-icon icon="solar:magnifer-linear" class="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-base"></iconify-icon>
+          <input type="text" id="catalogSearchInput" oninput="onSearchProducts(this.value)" placeholder="Поиск товара..."
+            class="w-full pl-9 pr-8 py-2 bg-zinc-900/90 border border-white/[0.08] focus:border-amber-400/80 rounded-xl sm:rounded-2xl text-xs sm:text-sm text-white placeholder:text-gray-500 outline-none transition backdrop-blur-md ring-1 ring-inset ring-white/[0.05]">
+          <button id="catalogSearchClearBtn" onclick="clearCatalogSearch()" class="hidden absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white text-xs p-1">✕</button>
+        </div>
+
+        <!-- Categories Filter Tabs (shadcn Segmented Control) -->
+        <div class="flex items-center gap-1 bg-zinc-900/90 p-1.5 rounded-xl sm:rounded-2xl border border-white/[0.08] overflow-x-auto no-scrollbar w-full sm:w-auto backdrop-blur-md ring-1 ring-inset ring-white/[0.05]">
+          <button onclick="switchCategory('all')" id="tab-all" class="cat-tab px-3 sm:px-4 py-2 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm transition flex items-center gap-1.5 shrink-0 bg-gradient-to-r from-amber-500 to-orange-500 text-black shadow-lg spring-click">
+            <iconify-icon icon="solar:sparkles-bold-duotone" class="text-base"></iconify-icon>
+            <span>Все</span>
+          </button>
+          <button onclick="switchCategory('privileges')" id="tab-privileges" class="cat-tab px-3 sm:px-4 py-2 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm text-gray-400 hover:text-white transition flex items-center gap-1.5 shrink-0 spring-click">
+            <iconify-icon icon="solar:crown-bold-duotone" class="text-base"></iconify-icon>
+            <span>Привилегии</span>
+          </button>
+          <button onclick="switchCategory('cases')" id="tab-cases" class="cat-tab px-3 sm:px-4 py-2 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm text-gray-400 hover:text-white transition flex items-center gap-1.5 shrink-0 spring-click">
+            <iconify-icon icon="solar:box-bold-duotone" class="text-base"></iconify-icon>
+            <span>Кейсы</span>
+          </button>
+          <button onclick="switchCategory('currency')" id="tab-currency" class="cat-tab px-3 sm:px-4 py-2 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm text-gray-400 hover:text-white transition flex items-center gap-1.5 shrink-0 spring-click">
+            <iconify-icon icon="solar:wallet-money-bold-duotone" class="text-base"></iconify-icon>
+            <span>Валюта</span>
+          </button>
+          <button onclick="switchCategory('services')" id="tab-services" class="cat-tab px-3 sm:px-4 py-2 rounded-lg sm:rounded-xl font-bold text-xs sm:text-sm text-gray-400 hover:text-white transition flex items-center gap-1.5 shrink-0 spring-click">
+            <iconify-icon icon="solar:tuning-bold-duotone" class="text-base"></iconify-icon>
+            <span>Услуги</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Active Search Filter Badge -->
+    <div id="catalogResultsCount" class="hidden mb-4 text-xs text-amber-400/90 font-mono flex items-center gap-2"></div>
+
+    <!-- PRODUCTS GRID -->
+    <div id="productsGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5 sm:gap-6 w-full"></div>
+  </section>
+
+  <!-- PRIVILEGES COMPARISON TABLE SECTION -->
+  <section id="privileges" class="py-8 sm:py-16 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 relative z-10 w-full overflow-hidden">
+    <div class="text-center max-w-2xl mx-auto mb-5 sm:mb-12">
+      <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-2">
+        <iconify-icon icon="solar:shield-check-bold-duotone" class="text-sm"></iconify-icon>
+        <span>Сравнение всех привилегий</span>
+      </div>
+      <h2 class="text-2xl sm:text-4xl font-black font-display text-white">
+        Сравнение возможностей
+      </h2>
+      <p class="text-gray-400 text-xs sm:text-sm mt-1">
+        Сравните команды, бонусы, точки домов и количество приватов.
+      </p>
+    </div>
+
+    <!-- Comparison Table -->
+    <div class="w-full max-w-full overflow-x-auto no-scrollbar bg-zinc-950/80 border border-white/[0.08] rounded-2xl sm:rounded-3xl shadow-2xl backdrop-blur-md">
+      <table class="w-full text-left border-collapse text-xs sm:text-sm min-w-[900px]">
+        <thead>
+          <tr class="border-b border-white/[0.08] bg-zinc-900/90">
+            <th class="p-3.5 sm:p-5 font-display font-bold text-gray-300">Функция / Бонус</th>
+            <th class="p-3.5 sm:p-5 text-center font-display font-bold text-gray-400">Игрок</th>
+            <th class="p-3.5 sm:p-5 text-center font-display font-bold text-slate-300">Воин (79₽)</th>
+            <th class="p-3.5 sm:p-5 text-center font-display font-bold text-orange-400">Берсерк (159₽)</th>
+            <th class="p-3.5 sm:p-5 text-center font-display font-bold text-lime-400">Спартанец (359₽)</th>
+            <th class="p-3.5 sm:p-5 text-center font-display font-bold text-yellow-400">Рыцарь (579₽)</th>
+            <th class="p-3.5 sm:p-5 text-center font-display font-bold text-purple-400">Лорд (899₽)</th>
+            <th class="p-3.5 sm:p-5 text-center font-display font-bold text-red-400">Владыка (1249₽)</th>
+            <th class="p-3.5 sm:p-5 text-center font-display font-bold text-blue-400">Император (1799₽)</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-white/[0.06] text-gray-300">
+          <tr class="hover:bg-white/[0.02] transition">
+            <td class="p-3 sm:p-5 font-semibold">Точек дома (/sethome)</td>
+            <td class="p-3 text-center text-gray-400">1</td>
+            <td class="p-3 text-center text-slate-300">2</td>
+            <td class="p-3 text-center text-orange-400 font-bold">3</td>
+            <td class="p-3 text-center text-lime-400 font-bold">4</td>
+            <td class="p-3 text-center text-yellow-400 font-bold">5</td>
+            <td class="p-3 text-center text-purple-400 font-bold">6</td>
+            <td class="p-3 text-center text-red-400 font-bold">8</td>
+            <td class="p-3 text-center text-blue-400 font-bold">10</td>
+          </tr>
+          <tr class="hover:bg-white/[0.02] transition">
+            <td class="p-3 sm:p-5 font-semibold">Количество регионов / приватов</td>
+            <td class="p-3 text-center text-gray-400">2</td>
+            <td class="p-3 text-center text-slate-300">4</td>
+            <td class="p-3 text-center text-orange-400 font-bold">5</td>
+            <td class="p-3 text-center text-lime-400 font-bold">6</td>
+            <td class="p-3 text-center text-yellow-400 font-bold">7</td>
+            <td class="p-3 text-center text-purple-400 font-bold">8</td>
+            <td class="p-3 text-center text-red-400 font-bold">10</td>
+            <td class="p-3 text-center text-blue-400 font-bold">12</td>
+          </tr>
+          <tr class="hover:bg-white/[0.02] transition">
+            <td class="p-3 sm:p-5 font-semibold">Слотов на аукционе</td>
+            <td class="p-3 text-center text-gray-400">2</td>
+            <td class="p-3 text-center text-slate-300">4</td>
+            <td class="p-3 text-center text-orange-400 font-bold">6</td>
+            <td class="p-3 text-center text-lime-400 font-bold">8</td>
+            <td class="p-3 text-center text-yellow-400 font-bold">10</td>
+            <td class="p-3 text-center text-purple-400 font-bold">10</td>
+            <td class="p-3 text-center text-red-400 font-bold">12</td>
+            <td class="p-3 text-center text-blue-400 font-bold">16</td>
+          </tr>
+          <tr class="hover:bg-white/[0.02] transition">
+            <td class="p-3 sm:p-5 font-semibold">Скорость телепортаций</td>
+            <td class="p-3 text-center text-gray-400">Стандарт</td>
+            <td class="p-3 text-center text-gray-400">Стандарт</td>
+            <td class="p-3 text-center text-gray-400">Стандарт</td>
+            <td class="p-3 text-center text-gray-400">Стандарт</td>
+            <td class="p-3 text-center text-yellow-400 font-bold">-2 сек</td>
+            <td class="p-3 text-center text-purple-400 font-bold">-2 сек</td>
+            <td class="p-3 text-center text-red-400 font-bold">-2 сек</td>
+            <td class="p-3 text-center text-blue-400 font-bold">⚡ Моментально</td>
+          </tr>
+          <!-- Доступные команды каждого ранга -->
+          <tr class="hover:bg-white/[0.02] transition">
+            <td class="p-3 sm:p-5 font-semibold text-amber-300">Доступные команды</td>
+            <td class="p-3 text-center text-gray-400 text-[11px] leading-relaxed font-mono">
+              /kit start
+            </td>
+            <td class="p-3 text-center text-slate-300 text-[11px] leading-relaxed font-mono">
+              /kit Воин<br>
+              /afk, /ignore, /sit
+            </td>
+            <td class="p-3 text-center text-orange-400 text-[11px] leading-relaxed font-mono font-medium">
+              /kit Берсек<br>
+              /feed (ник), /ec<br>
+              /setwarp, /delwarp, /lay
+            </td>
+            <td class="p-3 text-center text-lime-400 text-[11px] leading-relaxed font-mono font-medium">
+              /kit Спартанец<br>
+              /heal (ник), /repair<br>
+              /ext, /suicide, /back
+            </td>
+            <td class="p-3 text-center text-yellow-400 text-[11px] leading-relaxed font-mono font-medium">
+              /kit Рыцарь<br>
+              /near, /ptime, /pweather<br>
+              /checkbalance ник<br>
+              /workbench
+            </td>
+            <td class="p-3 text-center text-purple-400 text-[11px] leading-relaxed font-mono font-medium">
+              /kit Лорд, /anvil<br>
+              /checkbalance on | off<br>
+              /bc, /jump, /repair all
+            </td>
+            <td class="p-3 text-center text-red-400 text-[11px] leading-relaxed font-mono font-medium">
+              /kit Владыка, /kit +<br>
+              /invsee ник, /fly<br>
+              /rename
+            </td>
+            <td class="p-3 text-center text-blue-400 text-[11px] leading-relaxed font-mono font-bold">
+              /kit Император, /kit +<br>
+              /sc [сообщение]<br>
+              <span class="text-cyan-300 font-sans font-semibold">Связь с модерацией</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </section>
+
+  <!-- RULES & FAQ -->
+  <section id="rules" class="py-6 sm:py-12 max-w-4xl mx-auto px-3 sm:px-6 relative z-10 w-full">
+    <div class="modern-card rounded-2xl sm:rounded-3xl p-5 sm:p-8 backdrop-blur-xl">
+      <h3 class="text-base sm:text-xl font-bold font-display text-white mb-4 flex items-center gap-2">
+        <iconify-icon icon="solar:info-circle-bold-duotone" class="text-amber-400 text-xl"></iconify-icon>
+        <span>Информация и Ответы на вопросы</span>
+      </h3>
+      <div class="space-y-3 text-xs sm:text-sm text-gray-300">
+        <details class="group bg-zinc-950/70 p-3.5 sm:p-4 rounded-xl border border-white/[0.06] transition">
+          <summary class="font-bold text-white cursor-pointer flex justify-between items-center list-none">
+            <span>Как происходит выдача доната?</span>
+            <iconify-icon icon="solar:alt-arrow-down-linear" class="text-gray-400 group-open:rotate-180 transition-transform text-lg"></iconify-icon>
+          </summary>
+          <p class="mt-2.5 text-gray-400 text-xs leading-relaxed">
+            Выдача происходит мгновенно в течение 3–15 секунд после оплаты в автоматическом режиме через серверный плагин без необходимости перезахода.
+          </p>
+        </details>
+        <details class="group bg-zinc-950/70 p-3.5 sm:p-4 rounded-xl border border-white/[0.06] transition">
+          <summary class="font-bold text-white cursor-pointer flex justify-between items-center list-none">
+            <span>Какие способы оплаты поддерживаются?</span>
+            <iconify-icon icon="solar:alt-arrow-down-linear" class="text-gray-400 group-open:rotate-180 transition-transform text-lg"></iconify-icon>
+          </summary>
+          <p class="mt-2.5 text-gray-400 text-xs leading-relaxed">
+            СБП (Система быстрых платежей без комиссии), любые карты РФ (МИР, Visa, Mastercard), ЮMoney и криптовалюты через защищённый сервис Robokassa.
+          </p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- CONSOLIDATED PROFESSIONAL FOOTER (shadcn style) -->
+  <footer class="mt-auto border-t border-white/[0.08] bg-[#06080e] py-8 sm:py-12 relative z-20 w-full mb-16 md:mb-0">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-6 text-center md:text-left">
+      
+      <div class="flex items-center justify-center md:justify-start gap-3">
+        <img src="images/logo.png" alt="FloryMine" class="w-10 h-10 rounded-full border border-amber-500/40 shadow">
+        <div>
+          <div class="font-brand font-extrabold text-sm sm:text-base text-white tracking-wider">FLORYMINE NETWORK</div>
+          <div class="text-[11px] text-gray-400 font-medium">Владелец: <span class="text-gray-200">Луцюк И. А.</span> • ИНН: <span class="text-amber-400 font-mono">910614106137</span></div>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap justify-center items-center gap-x-5 gap-y-2 text-xs text-gray-400">
+        <a href="/rules" class="hover:text-amber-400 transition underline underline-offset-4 font-semibold text-gray-300">Правила сервера</a>
+        <span>•</span>
+        <a href="/oferta" class="hover:text-amber-400 transition underline underline-offset-4 font-semibold text-amber-300">Публичная оферта</a>
+        <span>•</span>
+        <a href="/privacy" class="hover:text-amber-400 transition underline underline-offset-4">Конфиденциальность</a>
+        <span>•</span>
+        <a href="/requisites" class="hover:text-amber-400 transition underline underline-offset-4">Реквизиты и контакты</a>
+        <span>•</span>
+        <a href="mailto:support@florymine.fun" class="hover:text-amber-400 transition underline underline-offset-4">support@florymine.fun</a>
+      </div>
+
+      <div class="flex items-center justify-center gap-2.5">
+        <a href="https://dsc.gg/florymine" target="_blank" class="p-2 sm:p-2.5 rounded-xl bg-zinc-900 border border-white/[0.08] text-gray-400 hover:text-amber-400 transition" title="Discord">
+          <iconify-icon icon="solar:chat-round-dots-bold-duotone" class="text-lg"></iconify-icon>
+        </a>
+        <a href="https://vk.com/florymine" target="_blank" class="p-2 sm:p-2.5 rounded-xl bg-zinc-900 border border-white/[0.08] text-gray-400 hover:text-blue-400 transition font-bold text-xs px-3" title="VK">
+          VK
+        </a>
+        <a href="https://t.me/florymine" target="_blank" class="p-2 sm:p-2.5 rounded-xl bg-zinc-900 border border-white/[0.08] text-gray-400 hover:text-cyan-400 transition" title="Telegram">
+          <iconify-icon icon="solar:plain-bold-duotone" class="text-lg"></iconify-icon>
+        </a>
+      </div>
+    </div>
+    
+    <div class="max-w-7xl mx-auto px-4 mt-6 pt-4 border-t border-white/[0.06] text-center text-[10px] text-gray-500">
+      © 2026 FloryMine Network. Minecraft является торговой маркой Mojang AB. Сервер и сайт не связаны с Mojang AB или Microsoft.
+    </div>
+  </footer>
+
+  <!-- MOBILE FLOATING BOTTOM DOCK -->
+  <div class="md:hidden fixed bottom-0 left-0 right-0 z-40 mobile-bottom-nav px-3 py-2 flex items-center justify-around w-full">
+    <a href="/#store" class="flex flex-col items-center gap-1 text-amber-400 font-bold text-[10px] active:scale-90 transition">
+      <iconify-icon icon="solar:bag-heart-bold-duotone" class="text-xl"></iconify-icon>
+      <span>Магазин</span>
+    </a>
+    <a href="/#bonus" class="flex flex-col items-center gap-1 text-gray-400 hover:text-yellow-400 font-medium text-[10px] active:scale-90 transition">
+      <iconify-icon icon="solar:gift-bold-duotone" class="text-xl"></iconify-icon>
+      <span>Бонус</span>
+    </a>
+    <a href="/#why-us" class="flex flex-col items-center gap-1 text-gray-400 hover:text-amber-400 font-medium text-[10px] active:scale-90 transition">
+      <iconify-icon icon="solar:star-fall-2-bold-duotone" class="text-xl"></iconify-icon>
+      <span>Гарантии</span>
+    </a>
+    <a href="/rules" class="flex flex-col items-center gap-1 text-gray-400 hover:text-amber-400 font-medium text-[10px] active:scale-90 transition">
+      <iconify-icon icon="solar:scale-bold-duotone" class="text-xl"></iconify-icon>
+      <span>Правила</span>
+    </a>
+  </div>
+
+  <!-- CHECKOUT MODAL (shadcn Dialog Redesign) -->
+  <div id="checkoutModal" class="fixed inset-0 bg-black/80 backdrop-blur-xl z-50 flex items-center justify-center p-3 hidden opacity-0 transition-opacity duration-300">
+    <div class="bg-[#0b0e17] border border-amber-500/40 rounded-2xl sm:rounded-3xl max-w-lg w-full p-4 sm:p-7 shadow-[0_0_50px_rgba(245,158,11,0.25)] relative max-h-[92vh] overflow-y-auto">
+      <button onclick="closeCheckoutModal()" class="absolute top-3.5 right-3.5 p-1.5 rounded-full bg-zinc-900 border border-white/10 text-gray-400 hover:text-white transition">
+        <iconify-icon icon="solar:close-circle-bold-duotone" class="text-xl"></iconify-icon>
+      </button>
+
+      <!-- Top Rank Image Banner -->
+      <div class="mb-3.5">
+        <div class="relative w-full h-32 sm:h-40 rounded-2xl overflow-hidden bg-zinc-950 border border-amber-500/30 shadow-md">
+          <img id="modalProductImage" src="images/vladyka.jpg" alt="Rank preview" class="w-full h-full object-cover object-center">
+          <div class="absolute inset-0 bg-gradient-to-t from-[#0b0e17] via-transparent to-black/30 pointer-events-none"></div>
+          
+          <div class="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none">
+            <div id="modalItemIconBox" class="w-9 h-9 rounded-xl bg-black/75 backdrop-blur-md border border-white/10 flex items-center justify-center text-xl shadow">👑</div>
+            <span id="modalItemBadge" class="px-3 py-1 rounded-full bg-black/75 backdrop-blur-md border border-amber-500/40 text-amber-400 font-bold text-[10px] uppercase tracking-wider shadow">ХИТ</span>
+          </div>
+
+          <div class="absolute bottom-2.5 left-3">
+            <div class="text-[10px] text-amber-400 font-bold uppercase tracking-wider">Оформление заказа</div>
+            <h3 id="modalItemTitle" class="text-lg sm:text-xl font-black font-display text-white">Привилегия ВЛАДЫКА</h3>
+          </div>
+        </div>
+      </div>
+
+      <div class="space-y-3 py-1">
+        <!-- Nickname with Dynamic Minecraft Skin Avatar -->
+        <div>
+          <label class="block text-[10px] sm:text-xs font-bold text-gray-300 uppercase tracking-wider mb-1">Игровой никнейм</label>
+          <div class="relative">
+            <div class="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-md bg-zinc-900 border border-white/10 overflow-hidden flex items-center justify-center">
+              <img id="modalAvatarHead" src="images/logo.png" alt="Skin Head" class="w-full h-full object-cover">
+            </div>
+            <input type="text" id="modalNicknameInput" oninput="onModalNicknameInput(this)" placeholder="Напишите свой игровой ник" 
+              class="w-full pl-11 pr-3 py-2.5 bg-zinc-950 border border-zinc-700/80 focus:border-amber-400 rounded-xl text-white font-semibold text-xs sm:text-sm outline-none transition placeholder:text-gray-500">
+          </div>
+          <!-- Rank Upgrade & Restriction Status Alert -->
+          <div id="modalRankAlert" class="hidden mt-2 text-xs p-2.5 rounded-xl font-semibold leading-relaxed border transition-all"></div>
+        </div>
+
+        <!-- Promo Code -->
+        <div>
+          <label class="block text-[10px] sm:text-xs font-bold text-gray-300 uppercase tracking-wider mb-1">Промокод на скидку</label>
+          <div class="flex gap-2">
+            <input type="text" id="promoCodeInput" placeholder="Введите промокод" 
+              class="w-full px-3 py-2.5 bg-zinc-950 border border-zinc-700/80 focus:border-amber-400 rounded-xl text-white font-mono text-xs sm:text-sm uppercase outline-none transition placeholder:text-gray-500">
+            <button onclick="applyPromoCode()" class="px-3.5 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-amber-400 font-bold text-xs tracking-wider transition shrink-0 border border-zinc-700">
+              Применить
+            </button>
+          </div>
+          <p id="promoStatusMessage" class="text-xs mt-1 hidden"></p>
+        </div>
+
+        <!-- Quantity Selector (for cases, currency, etc.) -->
+        <div id="modalQuantityContainer" class="hidden">
+          <label class="block text-[10px] sm:text-xs font-bold text-gray-300 uppercase tracking-wider mb-1">Желаемое количество</label>
+          <div class="flex items-center gap-2">
+            <button type="button" onclick="changeQuantity(-1)" class="w-10 h-10 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-base flex items-center justify-center border border-zinc-700 active:scale-95 transition">
+              -
+            </button>
+            <input type="number" id="modalQuantityInput" min="1" max="99" maxlength="2" value="1" onchange="onQuantityChange()" oninput="onQuantityChange()" onkeydown="onQuantityKeyDown(event)" onpaste="onQuantityPaste(event)"
+              class="w-full text-center py-2 bg-zinc-950 border border-zinc-700 focus:border-amber-400 rounded-xl text-white font-bold text-sm outline-none transition">
+            <button type="button" onclick="changeQuantity(1)" class="w-10 h-10 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-base flex items-center justify-center border border-zinc-700 active:scale-95 transition">
+              +
+            </button>
+          </div>
+        </div>
+
+        <!-- Warning / Error status for Services -->
+        <div id="modalServiceWarning" class="hidden text-xs p-2.5 rounded-xl font-medium leading-relaxed"></div>
+        <input type="hidden" id="paymentMethodSelect" value="sbp">
+
+        <!-- Price display (shadcn card style) -->
+        <div class="bg-zinc-950/90 p-3 sm:p-3.5 rounded-xl sm:rounded-2xl border border-white/[0.08] flex items-center justify-between shadow-inner">
+          <div>
+            <span class="text-[10px] sm:text-[11px] text-gray-400 uppercase font-semibold tracking-wider">Итого к оплате:</span>
+            <div id="modalOldPrice" class="text-[10px] sm:text-[11px] text-gray-500 line-through hidden">399 ₽</div>
+          </div>
+          <div id="modalTotalPrice" class="text-xl sm:text-2xl font-black font-display text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-yellow-300">
+            299 ₽
+          </div>
+        </div>
+      </div>
+
+      <!-- Glowing Shimmer Checkout Button (21st.dev style) -->
+      <button onclick="processPayment()" class="shimmer-btn w-full mt-3.5 py-3.5 sm:py-4 rounded-xl sm:rounded-2xl bg-gradient-to-r from-amber-500 via-orange-500 to-yellow-500 hover:from-amber-400 hover:via-orange-400 hover:to-yellow-400 text-black font-brand font-black text-xs sm:text-sm tracking-wider uppercase shadow-[0_0_25px_rgba(245,158,11,0.4)] hover:shadow-[0_0_35px_rgba(245,158,11,0.6)] transition-all transform active:scale-95 flex items-center justify-center gap-2 group">
+        <iconify-icon icon="solar:shield-check-bold-duotone" class="text-black text-lg"></iconify-icon>
+        <span>Перейти к оплате</span>
+        <iconify-icon icon="solar:arrow-right-linear" class="text-black text-base group-hover:translate-x-1 transition-transform"></iconify-icon>
+      </button>
+
+      <!-- Legal consent line for payment processors -->
+      <p class="mt-2 text-center text-[10px] sm:text-[11px] text-gray-400">
+        Нажимая кнопку, вы соглашаетесь с <a href="/oferta" target="_blank" class="text-amber-400 hover:underline">Публичной офертой</a> и условиями предоставления услуг.
+      </p>
+
+      <!-- Trust Badges Under Button -->
+      <div class="mt-2.5 flex items-center justify-center gap-3 sm:gap-4 text-[10px] sm:text-[11px] text-gray-400">
+        <span class="flex items-center gap-1">
+          <iconify-icon icon="solar:lock-keyhole-minimalistic-bold-duotone" class="text-emerald-400 text-sm"></iconify-icon>
+          <span>Защита Robokassa</span>
+        </span>
+        <span>•</span>
+        <span class="flex items-center gap-1">
+          <iconify-icon icon="solar:bolt-bold-duotone" class="text-amber-400 text-sm"></iconify-icon>
+          <span>Выдача 3-5 сек</span>
+        </span>
+        <span>•</span>
+        <span class="flex items-center gap-1">
+          <iconify-icon icon="solar:server-bold-duotone" class="text-blue-400 text-sm"></iconify-icon>
+          <span>24/7 Онлайн</span>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- PRIVILEGE DETAILS MODAL -->
+  <div id="detailsModal" class="fixed inset-0 bg-black/80 backdrop-blur-xl z-50 flex items-center justify-center p-3 hidden opacity-0 transition-opacity duration-300">
+    <div class="bg-[#0b0e17] border border-amber-500/35 rounded-2xl sm:rounded-3xl max-w-lg w-full p-4 sm:p-7 shadow-[0_0_50px_rgba(0,0,0,0.8)] relative max-h-[90vh] overflow-y-auto">
+      <button onclick="closeDetailsModal()" class="absolute top-3.5 right-3.5 p-1.5 rounded-full bg-zinc-900 border border-white/10 text-gray-400 hover:text-white transition">
+        <iconify-icon icon="solar:close-circle-bold-duotone" class="text-xl"></iconify-icon>
+      </button>
+      <div class="flex items-center gap-3 pb-3 border-b border-white/[0.08]">
+        <div id="detailsIconBox" class="w-11 h-11 sm:w-14 sm:h-14 rounded-xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-xl sm:text-3xl shadow">👑</div>
+        <div>
+          <div class="text-[10px] sm:text-xs text-amber-400 font-bold uppercase tracking-wider">Описание привилегии</div>
+          <h3 id="detailsTitle" class="text-base sm:text-2xl font-black font-display text-white">ВЛАДЫКА</h3>
+        </div>
+      </div>
+      <div class="pt-3">
+        <img id="detailsImage" src="" alt="rank banner" class="w-full h-36 sm:h-44 object-cover rounded-2xl border border-white/10 shadow-md mb-2" />
+      </div>
+      <div class="py-2 space-y-2.5">
+        <div>
+          <h4 class="text-[10px] sm:text-xs font-bold text-amber-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+            <iconify-icon icon="solar:sparkles-bold-duotone" class="text-sm"></iconify-icon>
+            <span>Преимущества и возможности:</span>
+          </h4>
+          <ul id="detailsPerks" class="space-y-1.5 text-xs text-gray-200 list-none"></ul>
+        </div>
+      </div>
+      <div class="pt-3 border-t border-white/[0.08] flex items-center justify-between">
+        <div id="detailsPrice" class="text-lg sm:text-2xl font-black font-display text-amber-400">1249 ₽</div>
+        <button id="detailsBuyBtn" class="shimmer-btn px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 text-black font-brand font-bold text-xs uppercase tracking-wider transition active:scale-95 shadow">
+          Купить сейчас
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION (Sonner / shadcn standard) -->
+  <div id="toast" class="fixed bottom-20 md:bottom-6 right-3 sm:right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
+    <div class="sonner-toast bg-[#0a0e17]/95 border border-white/10 text-white px-4 py-3 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.85)] flex items-center gap-3 backdrop-blur-2xl ring-1 ring-inset ring-white/[0.08] max-w-sm">
+      <div id="toastIconBox" class="w-8 h-8 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold shrink-0">
+        <span id="toastIcon">✓</span>
+      </div>
+      <div>
+        <div id="toastTitle" class="text-xs font-bold text-white leading-tight">Уведомление</div>
+        <div id="toastMessage" class="text-[11px] text-gray-300 font-medium leading-tight mt-0.5">Готово!</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=6.0"></script>
+  <script>lucide.createIcons();</script>
+</body>
+</html>
