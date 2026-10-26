@@ -1,4 +1,5 @@
 import asyncio
+import json
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -7,9 +8,13 @@ from typing import Optional
 from config import (
     UNAUTHORIZED_MESSAGE,
     CONFIG,
+    AUTHORIZED_GUILDS,
     save_config,
     STAFF_HIERARCHY,
     STAFF_ROLE_DAILY_NORM_HOURS,
+    TRAINEE_ROLE_ID,
+    TRAINEE_MAX_WARNS,
+    DEFAULT_STAFF_MAX_WARNS,
 )
 from core.permissions import (
     is_authorized_guild,
@@ -23,6 +28,25 @@ from utils.staff_card import generate_staff_profile_card
 from utils.embeds import create_security_embed, COLOR_FLORY_ORANGE
 from utils.logger import logger
 
+SYNC_PREFIX = "__FLORY_SYNC__"
+
+# Map LuckPerms group names from FloryModerators -> (Display Rank Name, Discord Role ID)
+MC_GROUP_TO_RANK = {
+    "ruk": ("Высшая Администрация", 1391723885900333214),
+    "admin": ("Администрация", 1548646933101420564),
+    "developer": ("Администрация", 1548646933101420564),
+    "cur": ("Куратор", 1454703503292502155),
+    "gl.moder": ("Гл. Модер | Зам. Куратора", 1548961652899061841),
+    "st.moder": ("Ст. Модер", 1478446161810690159),
+    "moder": ("Модер", 1454703438989492389),
+    "helper": ("Хелпер", 1454703334459048000),
+    "intern": ("Стажер", 1454703157677395969),
+}
+
+KNOWN_DISCORD_TO_MC_NICK = {
+    1398717669607473254: "Devil_First_More",
+}
+
 
 class StaffCog(commands.Cog, name="Staff"):
     """
@@ -30,6 +54,7 @@ class StaffCog(commands.Cog, name="Staff"):
     - /staff-profile: Dynamic yellow-orange graphic profile card for staff members.
     - /staff-norm: Configure daily online hours norm per staff rank for % calculation.
     - /staff-sync: Sync/update Minecraft moderation stats (FloryModerators bridge).
+    - Cloud Sync Listener: Receives __FLORY_SYNC__ packets sent by FloryModerators plugin.
     """
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -39,6 +64,68 @@ class StaffCog(commands.Cog, name="Staff"):
             await interaction.response.send_message(f"⚠️ {UNAUTHORIZED_MESSAGE}", ephemeral=True)
             return False
         return True
+
+    async def _process_sync_payload(self, raw_text: str, default_guild_id: int) -> bool:
+        """Parses a __FLORY_SYNC__ JSON packet from FloryModerators and stores it in SQLite."""
+        if not raw_text or not raw_text.startswith(SYNC_PREFIX):
+            return False
+        json_part = raw_text[len(SYNC_PREFIX):].strip()
+        try:
+            payload = json.loads(json_part)
+            items = payload if isinstance(payload, list) else [payload]
+            for item in items:
+                guild_id = int(item.get("guild_id") or default_guild_id)
+                user_id = int(item.get("user_id") or 0)
+                mc_nick = item.get("minecraft_nick")
+                if not user_id and mc_nick and mc_nick.strip().lower() == "devil_first_more":
+                    user_id = 1398717669607473254
+
+                await db.upsert_staff_stats(
+                    guild_id=guild_id,
+                    user_id=user_id,
+                    minecraft_nick=mc_nick,
+                    primary_group=item.get("primary_group"),
+                    online_seconds=int(item.get("online_seconds", 0)),
+                    norm_seconds=int(item.get("norm_seconds", 0)),
+                    warns_issued=int(item.get("warns_issued", 0)),
+                    bans_issued=int(item.get("bans_issued", 0)),
+                    reports_accepted=int(item.get("reports_accepted", 0)),
+                    mutes_issued=int(item.get("mutes_issued", 0)),
+                )
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to parse __FLORY_SYNC__ packet: {e}")
+            return False
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        """Real-time Cloud Sync listener for FloryModerators packets."""
+        if not message.guild or not message.content:
+            return
+        if message.content.startswith(SYNC_PREFIX):
+            await self._process_sync_payload(message.content, message.guild.id)
+            try:
+                await message.delete()
+            except Exception:
+                pass
+
+    async def _ingest_pending_sync_messages(self, guild: discord.Guild):
+        """Checks the guild log channel for any unprocessed __FLORY_SYNC__ packets."""
+        guild_cfg = AUTHORIZED_GUILDS.get(guild.id, {})
+        log_channel_id = guild_cfg.get("log_channel_id", 1391723887846490224)
+        channel = guild.get_channel(log_channel_id)
+        if not isinstance(channel, discord.TextChannel):
+            return
+        try:
+            async for msg in channel.history(limit=15):
+                if msg.content and msg.content.startswith(SYNC_PREFIX):
+                    await self._process_sync_payload(msg.content, guild.id)
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.debug(f"Could not scan sync history: {e}")
 
     @app_commands.command(
         name="staff-profile",
@@ -66,23 +153,41 @@ class StaffCog(commands.Cog, name="Staff"):
 
         await interaction.response.defer(ephemeral=False)
 
-        # 1. Determine Staff Rank & Reprimand Limit (1 for Стажер, 3 for other staff)
+        # Ingest any pending cloud sync messages from FloryModerators
+        await self._ingest_pending_sync_messages(interaction.guild)
+
+        # 1. Fetch Minecraft moderation & online stats (by user_id or fallback nicknames)
+        candidate_nicks = [target.name, target.display_name, getattr(target, "global_name", None)]
+        if target.id in KNOWN_DISCORD_TO_MC_NICK:
+            candidate_nicks.insert(0, KNOWN_DISCORD_TO_MC_NICK[target.id])
+
+        stats = await db.get_staff_stats(interaction.guild.id, target.id, fallback_nicks=candidate_nicks)
+
+        # 2. Determine Staff Rank, Reprimand Limit & Daily Norm
         rank_name, max_warns, _, _ = get_member_staff_rank(target)
         role_norm_seconds = get_member_daily_norm_seconds(target)
 
-        # 2. Fetch active reprimands count from Discord DB
+        mc_group = (stats.get("primary_group") or "").lower() if stats else ""
+        if mc_group in MC_GROUP_TO_RANK:
+            mc_rank_name, mc_role_id = MC_GROUP_TO_RANK[mc_group]
+            rank_name = mc_rank_name
+            max_warns = TRAINEE_MAX_WARNS if mc_role_id == TRAINEE_ROLE_ID else DEFAULT_STAFF_MAX_WARNS
+            role_norm_seconds = int(STAFF_ROLE_DAILY_NORM_HOURS.get(mc_role_id, 3.0) * 3600)
+
+        # 3. Fetch active reprimands count from Discord DB
         active_warns = await db.get_active_warn_count(interaction.guild.id, target.id)
 
-        # 3. Fetch Minecraft moderation & online stats (from FloryModerators table)
-        stats = await db.get_staff_stats(interaction.guild.id, target.id)
-        display_nick = (stats.get("minecraft_nick") if stats and stats.get("minecraft_nick") else None) or target.name
+        display_nick = (
+            (stats.get("minecraft_nick") if stats and stats.get("minecraft_nick") else None)
+            or KNOWN_DISCORD_TO_MC_NICK.get(target.id)
+            or target.name
+        )
         online_seconds = int(stats.get("online_seconds", 0)) if stats else 0
-        # Use role-based daily norm unless explicitly overridden in stats
         norm_seconds = int(stats["norm_seconds"]) if (stats and stats.get("norm_seconds")) else role_norm_seconds
-        warns_issued = stats.get("warns_issued") if stats else None
-        bans_issued = stats.get("bans_issued") if stats else None
-        reports_accepted = stats.get("reports_accepted") if stats else None
-        mutes_issued = stats.get("mutes_issued") if stats else None
+        warns_issued = int(stats.get("warns_issued") or 0) if stats else 0
+        bans_issued = int(stats.get("bans_issued") or 0) if stats else 0
+        reports_accepted = int(stats.get("reports_accepted") or 0) if stats else 0
+        mutes_issued = int(stats.get("mutes_issued") or 0) if stats else 0
 
         # 4. Download user's Discord avatar (falls back to requester's avatar if needed)
         avatar_bytes = None
@@ -149,7 +254,6 @@ class StaffCog(commands.Cog, name="Staff"):
                 return
 
             STAFF_ROLE_DAILY_NORM_HOURS[role.id] = round(daily_hours, 2)
-            # Persist to config.json
             staff_cfg = CONFIG.setdefault("staff", {})
             hierarchy_list = staff_cfg.get("roles_hierarchy", [])
             updated = False

@@ -3,11 +3,17 @@ from pathlib import Path
 from typing import Optional
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
+FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Loads a clean sans-serif font with Cyrillic support across Windows & Linux."""
+    """Loads bundled Cyrillic TrueType font from assets/fonts first, then system fallbacks."""
+    bundled_bold = str(FONTS_DIR / "segoeuib.ttf")
+    bundled_reg = str(FONTS_DIR / "segoeui.ttf")
+
     candidates = (
         [
+            bundled_bold,
             "C:/Windows/Fonts/segoeuib.ttf",
             "C:/Windows/Fonts/arialbd.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -15,6 +21,7 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageF
         ]
         if bold
         else [
+            bundled_reg,
             "C:/Windows/Fonts/segoeui.ttf",
             "C:/Windows/Fonts/seguisb.ttf",
             "C:/Windows/Fonts/arial.ttf",
@@ -103,23 +110,17 @@ def _draw_icon(draw: ImageDraw.ImageDraw, icon_type: str, x: int, y: int, color:
         draw.line([(x + 3, y + 3), (x + 25, y + 27)], fill=(255, 165, 0, 230), width=3)
 
 
-def _draw_watermark_status(card: Image.Image, available: bool):
-    """Draws a subtle watermark (X or Check) on the right side of a dark stat card."""
+def _draw_watermark_status(card: Image.Image, icon_type: str):
+    """Draws a subtle decorative circle and check accent on the right side of a dark stat card."""
     overlay = Image.new("RGBA", card.size, (0, 0, 0, 0))
     odraw = ImageDraw.Draw(overlay)
     w, h = card.size
     cx, cy = w - 65, h // 2 + 6
-    col = (255, 180, 40, 14) if available else (255, 255, 255, 9)
 
     r = 58
-    odraw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=col)
-
+    odraw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(255, 180, 40, 14))
     cut_col = (26, 22, 19, 255)
-    if available:
-        odraw.line([(cx - 22, cy + 2), (cx - 6, cy + 18), (cx + 24, cy - 16)], fill=cut_col, width=10)
-    else:
-        odraw.line([(cx - 20, cy - 20), (cx + 20, cy + 20)], fill=cut_col, width=10)
-        odraw.line([(cx + 20, cy - 20), (cx - 20, cy + 20)], fill=cut_col, width=10)
+    odraw.line([(cx - 22, cy + 2), (cx - 6, cy + 18), (cx + 24, cy - 16)], fill=cut_col, width=10)
 
     card.alpha_composite(overlay)
 
@@ -132,10 +133,10 @@ def generate_staff_profile_card(
     max_warns: int,
     online_seconds: int = 0,
     norm_seconds: int = 14400,
-    warns_issued: Optional[int] = None,
-    bans_issued: Optional[int] = None,
-    reports_accepted: Optional[int] = None,
-    mutes_issued: Optional[int] = None,
+    warns_issued: Optional[int] = 0,
+    bans_issued: Optional[int] = 0,
+    reports_accepted: Optional[int] = 0,
+    mutes_issued: Optional[int] = 0,
 ) -> io.BytesIO:
     """
     Generates a high-resolution FloryMine yellow-orange themed Staff Profile Card PNG.
@@ -158,7 +159,7 @@ def generate_staff_profile_card(
     font_online_sub = _load_font(20, bold=False)
     font_online_val = _load_font(27, bold=True)
     font_stat_label = _load_font(21, bold=False)
-    font_stat_val = _load_font(31, bold=True)
+    font_stat_val = _load_font(34, bold=True)
 
     # Layout constants for Left Grid (2 columns x 3 rows)
     col1_x = 34
@@ -180,12 +181,10 @@ def generate_staff_profile_card(
         color_bottom=(235, 110, 0),   # Vibrant FloryMine Orange
     )
 
-    # Decorative leaf/flame silhouette watermark on right side of Activity card
     wm = Image.new("RGBA", (card_w, top_card_h), (0, 0, 0, 0))
     wmd = ImageDraw.Draw(wm)
     wmd.ellipse((card_w - 150, 35, card_w + 35, 250), fill=(150, 58, 0, 52))
     wmd.line([(card_w - 62, 115), (card_w - 30, 210)], fill=(245, 145, 10, 95), width=9)
-    # Clip watermark to card alpha
     wm.putalpha(Image.composite(wm.getchannel("A"), Image.new("L", (card_w, top_card_h), 0), act_card.getchannel("A")))
     act_card.alpha_composite(wm)
 
@@ -195,8 +194,11 @@ def generate_staff_profile_card(
     else:
         pct = 100 if online_seconds > 0 else 0
 
+    pct_text = f"{pct}%"
+    pct_font = font_big_pct if len(pct_text) <= 5 else _load_font(52, bold=True)
+
     act_draw.text((26, 22), "Активность", font=font_label, fill=(255, 245, 220, 235))
-    act_draw.text((24, 56), f"{pct}%", font=font_big_pct, fill=(255, 255, 255, 255))
+    act_draw.text((24, 56), pct_text, font=pct_font, fill=(255, 255, 255, 255))
     act_draw.text((26, 142), "Онлайн", font=font_online_sub, fill=(255, 240, 200, 220))
     act_draw.text((26, 165), _format_online_time(online_seconds), font=font_online_val, fill=(255, 255, 255, 255))
 
@@ -232,13 +234,13 @@ def generate_staff_profile_card(
     # CARDS 3..6: 4 DARK STAT CARDS (2x2 Grid)
     # =========================================================================
     stat_items = [
-        (col1_x, row2_y, "shield", "Выдано варнов", warns_issued),
-        (col2_x, row2_y, "gavel", "Выдано банов", bans_issued),
-        (col1_x, row3_y, "report", "Принятые репорты", reports_accepted),
-        (col2_x, row3_y, "mute", "Выдано мутов", mutes_issued),
+        (col1_x, row2_y, "shield", "Выдано варнов", int(warns_issued or 0)),
+        (col2_x, row2_y, "gavel", "Выдано банов", int(bans_issued or 0)),
+        (col1_x, row3_y, "report", "Принятые репорты", int(reports_accepted or 0)),
+        (col2_x, row3_y, "mute", "Выдано мутов", int(mutes_issued or 0)),
     ]
 
-    for sx, sy, icon_name, label_text, raw_val in stat_items:
+    for sx, sy, icon_name, label_text, num_val in stat_items:
         scard = Image.new("RGBA", (card_w, stat_card_h), (0, 0, 0, 0))
         sdraw = ImageDraw.Draw(scard)
         sdraw.rounded_rectangle(
@@ -249,16 +251,13 @@ def generate_staff_profile_card(
             width=1,
         )
 
-        is_avail = raw_val is not None
-        _draw_watermark_status(scard, available=is_avail)
+        _draw_watermark_status(scard, icon_name)
 
-        icon_col = (255, 180, 40, 210) if is_avail else (145, 138, 130, 190)
+        icon_col = (255, 180, 40, 220)
         _draw_icon(sdraw, icon_name, 26, 26, icon_col)
 
-        sdraw.text((26, 102), label_text, font=font_stat_label, fill=(160, 152, 142, 255))
-        val_str = str(raw_val) if is_avail else "Недоступно"
-        val_color = (255, 255, 255, 255) if is_avail else (235, 235, 235, 245)
-        sdraw.text((26, 134), val_str, font=font_stat_val, fill=val_color)
+        sdraw.text((26, 98), label_text, font=font_stat_label, fill=(165, 156, 145, 255))
+        sdraw.text((26, 130), str(num_val), font=font_stat_val, fill=(255, 255, 255, 255))
 
         base.alpha_composite(scard, (sx, sy))
 

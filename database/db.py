@@ -83,14 +83,39 @@ class Database:
                     guild_id INTEGER NOT NULL,
                     user_id INTEGER NOT NULL,
                     minecraft_nick TEXT,
+                    primary_group TEXT,
                     online_seconds INTEGER DEFAULT 0,
                     norm_seconds INTEGER DEFAULT 0,
-                    warns_issued INTEGER,
-                    bans_issued INTEGER,
-                    reports_accepted INTEGER,
-                    mutes_issued INTEGER,
+                    warns_issued INTEGER DEFAULT 0,
+                    bans_issued INTEGER DEFAULT 0,
+                    reports_accepted INTEGER DEFAULT 0,
+                    mutes_issued INTEGER DEFAULT 0,
                     updated_at TIMESTAMP,
                     PRIMARY KEY (guild_id, user_id)
+                );
+            """)
+
+            async with db.execute("PRAGMA table_info(staff_stats);") as cursor:
+                staff_cols = [row[1] for row in await cursor.fetchall()]
+                if "primary_group" not in staff_cols:
+                    await db.execute("ALTER TABLE staff_stats ADD COLUMN primary_group TEXT;")
+
+            # Table for Nickname-keyed Staff Stats (when FloryModerators syncs before Discord ID is known)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS staff_stats_by_nick (
+                    guild_id INTEGER NOT NULL,
+                    lower_nick TEXT NOT NULL,
+                    minecraft_nick TEXT NOT NULL,
+                    user_id INTEGER DEFAULT 0,
+                    primary_group TEXT,
+                    online_seconds INTEGER DEFAULT 0,
+                    norm_seconds INTEGER DEFAULT 0,
+                    warns_issued INTEGER DEFAULT 0,
+                    bans_issued INTEGER DEFAULT 0,
+                    reports_accepted INTEGER DEFAULT 0,
+                    mutes_issued INTEGER DEFAULT 0,
+                    updated_at TIMESTAMP,
+                    PRIMARY KEY (guild_id, lower_nick)
                 );
             """)
 
@@ -383,7 +408,7 @@ class Database:
             return cursor.rowcount
 
     # --- STAFF STATS (FLORYMODERATORS MINECRAFT PLUGIN SYNC) ---
-    async def get_staff_stats(self, guild_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+    async def get_staff_stats(self, guild_id: int, user_id: int, fallback_nicks: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
         """Fetch Minecraft staff moderation & activity statistics for a staff member."""
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
@@ -392,13 +417,38 @@ class Database:
                 (guild_id, user_id)
             ) as cursor:
                 row = await cursor.fetchone()
-                return dict(row) if row else None
+                if row:
+                    return dict(row)
+
+            # Fallback: check staff_stats_by_nick by user_id or candidate nicknames
+            async with db.execute(
+                "SELECT * FROM staff_stats_by_nick WHERE guild_id = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1",
+                (guild_id, user_id)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    return dict(row)
+
+            if fallback_nicks:
+                for nick in fallback_nicks:
+                    if not nick:
+                        continue
+                    async with db.execute(
+                        "SELECT * FROM staff_stats_by_nick WHERE guild_id = ? AND lower_nick = ? LIMIT 1",
+                        (guild_id, nick.strip().lower())
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                        if row:
+                            return dict(row)
+
+            return None
 
     async def upsert_staff_stats(
         self,
         guild_id: int,
         user_id: int,
         minecraft_nick: Optional[str] = None,
+        primary_group: Optional[str] = None,
         online_seconds: Optional[int] = None,
         norm_seconds: Optional[int] = None,
         warns_issued: Optional[int] = None,
@@ -407,26 +457,39 @@ class Database:
         mutes_issued: Optional[int] = None,
     ) -> bool:
         """Create or update staff stats record (for FloryModerators sync or admin tools)."""
-        existing = await self.get_staff_stats(guild_id, user_id)
+        existing = await self.get_staff_stats(guild_id, user_id) if user_id and user_id > 0 else None
         now_str = datetime.now(timezone.utc).isoformat()
 
         mc_nick = minecraft_nick if minecraft_nick is not None else (existing.get("minecraft_nick") if existing else None)
+        p_grp = primary_group if primary_group is not None else (existing.get("primary_group") if existing else None)
         on_sec = online_seconds if online_seconds is not None else (existing.get("online_seconds", 0) if existing else 0)
         nrm_sec = norm_seconds if norm_seconds is not None else (existing.get("norm_seconds", 0) if existing else 0)
-        w_iss = warns_issued if warns_issued is not None else (existing.get("warns_issued") if existing else None)
-        b_iss = bans_issued if bans_issued is not None else (existing.get("bans_issued") if existing else None)
-        r_acc = reports_accepted if reports_accepted is not None else (existing.get("reports_accepted") if existing else None)
-        m_iss = mutes_issued if mutes_issued is not None else (existing.get("mutes_issued") if existing else None)
+        w_iss = warns_issued if warns_issued is not None else (existing.get("warns_issued", 0) if existing else 0)
+        b_iss = bans_issued if bans_issued is not None else (existing.get("bans_issued", 0) if existing else 0)
+        r_acc = reports_accepted if reports_accepted is not None else (existing.get("reports_accepted", 0) if existing else 0)
+        m_iss = mutes_issued if mutes_issued is not None else (existing.get("mutes_issued", 0) if existing else 0)
 
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                """
-                INSERT OR REPLACE INTO staff_stats
-                (guild_id, user_id, minecraft_nick, online_seconds, norm_seconds, warns_issued, bans_issued, reports_accepted, mutes_issued, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (guild_id, user_id, mc_nick, on_sec, nrm_sec, w_iss, b_iss, r_acc, m_iss, now_str)
-            )
+            if user_id and user_id > 0:
+                await db.execute(
+                    """
+                    INSERT OR REPLACE INTO staff_stats
+                    (guild_id, user_id, minecraft_nick, primary_group, online_seconds, norm_seconds, warns_issued, bans_issued, reports_accepted, mutes_issued, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (guild_id, user_id, mc_nick, p_grp, on_sec, nrm_sec, w_iss, b_iss, r_acc, m_iss, now_str)
+                )
+
+            if mc_nick:
+                await db.execute(
+                    """
+                    INSERT OR REPLACE INTO staff_stats_by_nick
+                    (guild_id, lower_nick, minecraft_nick, user_id, primary_group, online_seconds, norm_seconds, warns_issued, bans_issued, reports_accepted, mutes_issued, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (guild_id, mc_nick.strip().lower(), mc_nick.strip(), user_id or 0, p_grp, on_sec, nrm_sec, w_iss, b_iss, r_acc, m_iss, now_str)
+                )
+
             await db.commit()
             return True
 
