@@ -49,6 +49,55 @@ def warn_dm_embed(warn_count: int, max_warns: int = 5, reason: str = "Несан
     return embed
 
 
+def staff_warn_dm_embed(
+    guild: discord.Guild,
+    moderator: discord.Member | discord.User,
+    duration_text: str,
+    situation: str,
+    reason: str,
+    warn_count: int,
+    max_warns: int,
+    demoted: bool = False,
+) -> discord.Embed:
+    """
+    Creates the sleek dark DM embed matching the reference screenshot for /warn.
+    """
+    title_text = "Вам выдали Выговор" if not demoted else "Вам выдали Выговор (Снятие с должности)"
+    clean_situation = (situation or reason).replace("```", "'''").strip()
+    clean_reason = reason.replace("```", "'''").strip()
+    clean_duration = duration_text.replace("```", "'''").strip()
+
+    extra_demote = ""
+    if demoted:
+        extra_demote = (
+            f"\n⚠️ **Достигнут лимит выговоров ({warn_count}/{max_warns}) — вы были автоматически сняты с должности стаффа.**"
+        )
+
+    description = (
+        f"> **Исполнитель:**\n"
+        f"• {moderator.mention}\n"
+        f"• **Имя:** {moderator.name}\n"
+        f"• **ID:** {moderator.id}\n"
+        f"> **Длительность:**\n"
+        f"```{clean_duration}```\n"
+        f"**Описание ситуации**\n"
+        f"```{clean_situation}```\n"
+        f"> **Причина:**\n"
+        f"```{clean_reason}```"
+        f"{extra_demote}"
+    )
+
+    embed = discord.Embed(
+        title=title_text,
+        description=description,
+        color=COLOR_DARK,
+        timestamp=datetime.now(timezone.utc),
+    )
+    icon_url = guild.icon.url if (guild and guild.icon) else DEFAULT_FOOTER_ICON
+    embed.set_author(name="FloryMine", icon_url=icon_url)
+    return embed
+
+
 def anti_nuke_alert_embed(
     action_type: str,
     executor: discord.User | discord.Member,
@@ -81,8 +130,8 @@ def anti_nuke_alert_embed(
 
 
 def automod_alert_embed(
-    member: discord.Member,
-    channel: discord.TextChannel,
+    member: discord.Member | discord.User,
+    channel: discord.abc.GuildChannel,
     threat_type: str,
     matched_content: str,
     action: str = "Удалено"
@@ -96,10 +145,10 @@ def automod_alert_embed(
     embed.add_field(name="👤 Автор", value=f"{member.mention} (`{member.name}` | `{member.id}`)", inline=True)
     embed.add_field(name="💬 Канал", value=channel.mention, inline=True)
     embed.add_field(name="🔍 Тип угрозы", value=f"`{threat_type}`", inline=False)
-    
+
     # Trim content if too long
     safe_content = matched_content[:400] + ("..." if len(matched_content) > 400 else "")
-    embed.add_field(name="📝 Содержимое", value=f"```{safe_content}```", inline=False)
+    embed.add_field(name="📝 Содержимое", value=f"```{safe_content or 'Пусто'}```", inline=False)
     embed.add_field(name="⚙️ Действие", value=f"✅ {action}", inline=True)
 
     embed.set_footer(text="FloryGuard AutoMod", icon_url=DEFAULT_FOOTER_ICON)
@@ -143,19 +192,21 @@ def profile_embed(
     embed.add_field(name="🔰 Уровень доступа / Должность", value=rank_badge, inline=False)
 
     # Show Granular Permissions for administrators
-    if admin_info and admin_info.get("permissions"):
+    if admin_info and admin_info.get("rank") in ("owner", "senior_admin", "admin", "whitelist"):
         if admin_info.get("is_full"):
             perms_display = "⭐ **Полный доступ (Все права)**"
-        else:
+        elif admin_info.get("permissions"):
             from core.permissions import AVAILABLE_PERMISSIONS
             perm_lines = []
             for p in admin_info["permissions"]:
                 if p in AVAILABLE_PERMISSIONS:
                     meta = AVAILABLE_PERMISSIONS[p]
                     perm_lines.append(f"• {meta['emoji']} **{meta['label']}**")
-                else:
+                elif p != "none":
                     perm_lines.append(f"• `{p}`")
-            perms_display = "\n".join(perm_lines) if perm_lines else "*Базовые права*"
+            perms_display = "\n".join(perm_lines) if perm_lines else "🔒 *Все права отключены*"
+        else:
+            perms_display = "🔒 *Все права отключены*"
         embed.add_field(name="📜 Выданные полномочия", value=perms_display, inline=False)
 
     warn_count = len(warnings)
@@ -179,7 +230,7 @@ def profile_embed(
         embed.add_field(name="📜 Список нарушений", value="*Нарушений не зафиксировано, история чиста.*", inline=False)
 
     # Roles summary
-    roles_list = [r.mention for r in member.roles if r.name != "@everyone"]
+    roles_list = [r.mention for r in member.roles if not r.is_default()]
     roles_str = ", ".join(roles_list[:10]) if roles_list else "*Нет ролей*"
     if len(roles_list) > 10:
         roles_str += f" *(и ещё {len(roles_list) - 10})*"

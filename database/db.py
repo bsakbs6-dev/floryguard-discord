@@ -53,7 +53,7 @@ class Database:
                 );
             """)
 
-            # Table for Warnings (Anti-Nuke / Mod warnings with expiration)
+            # Table for Warnings / Reprimands (Anti-Nuke & Staff warnings with expiration)
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS warnings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,9 +61,36 @@ class Database:
                     user_id INTEGER NOT NULL,
                     moderator_id INTEGER NOT NULL,
                     reason TEXT NOT NULL,
+                    situation TEXT DEFAULT '',
+                    duration_text TEXT DEFAULT '7 дн.',
                     created_at TIMESTAMP NOT NULL,
                     expires_at TIMESTAMP NOT NULL,
                     is_active INTEGER DEFAULT 1
+                );
+            """)
+
+            # Safe migration for warnings columns
+            async with db.execute("PRAGMA table_info(warnings);") as cursor:
+                warn_cols = [row[1] for row in await cursor.fetchall()]
+                if "situation" not in warn_cols:
+                    await db.execute("ALTER TABLE warnings ADD COLUMN situation TEXT DEFAULT '';")
+                if "duration_text" not in warn_cols:
+                    await db.execute("ALTER TABLE warnings ADD COLUMN duration_text TEXT DEFAULT '7 дн.';")
+
+            # Table for Staff Profile & FloryModerators Minecraft Plugin Sync
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS staff_stats (
+                    guild_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    minecraft_nick TEXT,
+                    online_seconds INTEGER DEFAULT 0,
+                    norm_seconds INTEGER DEFAULT 0,
+                    warns_issued INTEGER,
+                    bans_issued INTEGER,
+                    reports_accepted INTEGER,
+                    mutes_issued INTEGER,
+                    updated_at TIMESTAMP,
+                    PRIMARY KEY (guild_id, user_id)
                 );
             """)
 
@@ -196,7 +223,9 @@ class Database:
         if perms_str == "all" or "*" in perms_str:
             from core.permissions import AVAILABLE_PERMISSIONS
             return set(AVAILABLE_PERMISSIONS.keys()), title
-        return {p.strip() for p in perms_str.split(",") if p.strip()}, title
+        if perms_str == "none":
+            return set(), title
+        return {p.strip() for p in perms_str.split(",") if p.strip() and p.strip() != "none"}, title
 
     async def set_user_permissions(
         self,
@@ -208,12 +237,13 @@ class Database:
     ) -> bool:
         """Saves updated permissions set for user in admins table."""
         from core.permissions import AVAILABLE_PERMISSIONS
-        if len(permissions) >= len(AVAILABLE_PERMISSIONS):
+        clean_perms = {p for p in permissions if p and p != "none"}
+        if len(clean_perms) >= len(AVAILABLE_PERMISSIONS):
             perms_str = "all"
-        elif not permissions:
+        elif not clean_perms:
             perms_str = "none"
         else:
-            perms_str = ",".join(sorted(permissions))
+            perms_str = ",".join(sorted(clean_perms))
 
         admin = await self.get_admin(guild_id, user_id)
         if admin:
@@ -262,25 +292,44 @@ class Database:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
 
-    # --- WARNINGS SYSTEM ---
+    # --- WARNINGS / REPRIMANDS SYSTEM ---
     async def add_warning(
         self,
         guild_id: int,
         user_id: int,
         moderator_id: int,
         reason: str,
-        expiry_days: int = WARN_EXPIRY_DAYS
-    ) -> (int, int):
-        """Add a warning. Returns (new_warn_id, active_warns_count)."""
+        expiry_days: int = WARN_EXPIRY_DAYS,
+        expiry_seconds: Optional[int] = None,
+        situation: str = "",
+        duration_text: Optional[str] = None,
+    ) -> tuple[int, int]:
+        """Add a warning/reprimand. Returns (new_warn_id, active_warns_count)."""
         now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(days=expiry_days)
+        if expiry_seconds is not None:
+            expires_at = now + timedelta(seconds=max(60, expiry_seconds))
+        else:
+            expires_at = now + timedelta(days=expiry_days)
+
+        if not duration_text:
+            duration_text = f"{expiry_days} дн."
+
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
                 """
-                INSERT INTO warnings (guild_id, user_id, moderator_id, reason, created_at, expires_at, is_active)
-                VALUES (?, ?, ?, ?, ?, ?, 1)
+                INSERT INTO warnings (guild_id, user_id, moderator_id, reason, situation, duration_text, created_at, expires_at, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
                 """,
-                (guild_id, user_id, moderator_id, reason, now.isoformat(), expires_at.isoformat())
+                (
+                    guild_id,
+                    user_id,
+                    moderator_id,
+                    reason,
+                    situation or reason,
+                    duration_text,
+                    now.isoformat(),
+                    expires_at.isoformat(),
+                )
             )
             warn_id = cursor.lastrowid
             await db.commit()
@@ -327,11 +376,59 @@ class Database:
     async def clear_warnings(self, guild_id: int, user_id: int) -> int:
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
-                "UPDATE warnings SET is_active = 0 WHERE guild_id = ? AND user_id = ?",
+                "UPDATE warnings SET is_active = 0 WHERE guild_id = ? AND user_id = ? AND is_active = 1",
                 (guild_id, user_id)
             )
             await db.commit()
             return cursor.rowcount
+
+    # --- STAFF STATS (FLORYMODERATORS MINECRAFT PLUGIN SYNC) ---
+    async def get_staff_stats(self, guild_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+        """Fetch Minecraft staff moderation & activity statistics for a staff member."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM staff_stats WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def upsert_staff_stats(
+        self,
+        guild_id: int,
+        user_id: int,
+        minecraft_nick: Optional[str] = None,
+        online_seconds: Optional[int] = None,
+        norm_seconds: Optional[int] = None,
+        warns_issued: Optional[int] = None,
+        bans_issued: Optional[int] = None,
+        reports_accepted: Optional[int] = None,
+        mutes_issued: Optional[int] = None,
+    ) -> bool:
+        """Create or update staff stats record (for FloryModerators sync or admin tools)."""
+        existing = await self.get_staff_stats(guild_id, user_id)
+        now_str = datetime.now(timezone.utc).isoformat()
+
+        mc_nick = minecraft_nick if minecraft_nick is not None else (existing.get("minecraft_nick") if existing else None)
+        on_sec = online_seconds if online_seconds is not None else (existing.get("online_seconds", 0) if existing else 0)
+        nrm_sec = norm_seconds if norm_seconds is not None else (existing.get("norm_seconds", 0) if existing else 0)
+        w_iss = warns_issued if warns_issued is not None else (existing.get("warns_issued") if existing else None)
+        b_iss = bans_issued if bans_issued is not None else (existing.get("bans_issued") if existing else None)
+        r_acc = reports_accepted if reports_accepted is not None else (existing.get("reports_accepted") if existing else None)
+        m_iss = mutes_issued if mutes_issued is not None else (existing.get("mutes_issued") if existing else None)
+
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO staff_stats
+                (guild_id, user_id, minecraft_nick, online_seconds, norm_seconds, warns_issued, bans_issued, reports_accepted, mutes_issued, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (guild_id, user_id, mc_nick, on_sec, nrm_sec, w_iss, b_iss, r_acc, m_iss, now_str)
+            )
+            await db.commit()
+            return True
 
     # --- SNAPSHOTS (CHANNELS & ROLES RESTORE) ---
     async def save_snapshot(self, snapshot_id: str, guild_id: int, created_by: int, data: dict) -> bool:

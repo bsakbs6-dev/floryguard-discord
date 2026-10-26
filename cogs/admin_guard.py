@@ -2,27 +2,22 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import uuid
-from typing import Optional, Literal
-from datetime import datetime, timezone
+from typing import Optional
+from datetime import datetime
 
 from config import UNAUTHORIZED_MESSAGE, AUTHORIZED_GUILDS, OWNER_IDS, SENIOR_ADMIN_IDS
 from core.permissions import (
     is_authorized_guild,
     is_senior_admin,
-    is_bot_owner,
     is_admin,
-    is_whitelisted,
     AVAILABLE_PERMISSIONS,
-    get_admin_info
 )
 from database.db import db
-from utils.logger import logger
 from utils.embeds import (
     create_security_embed,
     COLOR_PRIMARY,
     COLOR_SUCCESS,
     COLOR_WARNING,
-    COLOR_DANGER
 )
 
 
@@ -269,7 +264,12 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
 
         current_title = title.strip() if (title and title.strip()) else (admin_data.get("title") or "Администратор Безопасности")
         perms_str = admin_data.get("permissions") or "all"
-        current_perms = ["all"] if perms_str == "all" else [p.strip() for p in perms_str.split(",") if p.strip()]
+        if perms_str == "all" or "*" in perms_str:
+            current_perms = ["all"]
+        elif perms_str == "none":
+            current_perms = []
+        else:
+            current_perms = [p.strip() for p in perms_str.split(",") if p.strip() and p.strip() != "none"]
 
         view = AdminConfigView(
             bot=self.bot,
@@ -351,10 +351,12 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
             for a in filtered_admins:
                 title = a.get("title") or "Администратор Безопасности"
                 perms_str = a.get("permissions") or "all"
-                if perms_str == "all":
+                if perms_str == "all" or "*" in perms_str:
                     perms_badge = "⭐ *Все права (Full Access)*"
+                elif perms_str == "none":
+                    perms_badge = "🔒 *Все права отключены*"
                 else:
-                    perms_list = [p.strip() for p in perms_str.split(",") if p.strip()]
+                    perms_list = [p.strip() for p in perms_str.split(",") if p.strip() and p.strip() != "none"]
                     emoji_labels = [f"{AVAILABLE_PERMISSIONS[p]['emoji']} {AVAILABLE_PERMISSIONS[p]['label']}" for p in perms_list if p in AVAILABLE_PERMISSIONS]
                     perms_badge = ", ".join(emoji_labels) if emoji_labels else "*Базовые права*"
                 lines.append(f"• <@{a['user_id']}> (`ID: {a['user_id']}`)\n  ↳ 🏷️ **{title}** | {perms_badge}")
@@ -388,7 +390,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         # Collect Roles
         roles_data = []
         for r in guild.roles:
-            if r.name != "@everyone":
+            if not r.is_default() and not r.managed:
                 roles_data.append({
                     "id": r.id,
                     "name": r.name,
@@ -474,10 +476,11 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
         guild = interaction.guild
         data = snap["data"]
 
-        # Restore Roles
+        # 1. Restore Roles (sorted by position)
         created_roles = 0
         existing_role_names = {r.name: r for r in guild.roles}
-        for r_info in data.get("roles", []):
+        sorted_roles = sorted(data.get("roles", []), key=lambda x: x.get("position", 0))
+        for r_info in sorted_roles:
             if r_info["name"] not in existing_role_names:
                 try:
                     await guild.create_role(
@@ -492,19 +495,67 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
                 except Exception:
                     pass
 
-        # Restore Channels
+        # 2. Restore Categories first, then Channels inside categories
         created_channels = 0
-        existing_ch_names = {c.name: c for c in guild.channels}
-        for ch_info in data.get("channels", []):
-            if ch_info["name"] not in existing_ch_names:
+        all_channels_data = sorted(data.get("channels", []), key=lambda x: x.get("position", 0))
+        existing_categories = {c.name: c for c in guild.categories}
+
+        for ch_info in all_channels_data:
+            ch_type = ch_info.get("type", "")
+            if ch_type == "category" and ch_info["name"] not in existing_categories:
                 try:
-                    ch_type = ch_info.get("type", "")
-                    if "text" in ch_type:
-                        await guild.create_text_channel(name=ch_info["name"], topic=ch_info.get("topic"), reason=f"FloryGuard Restore from {snapshot_id}")
+                    new_cat = await guild.create_category(
+                        name=ch_info["name"],
+                        position=ch_info.get("position", 0),
+                        reason=f"FloryGuard Restore from {snapshot_id}"
+                    )
+                    existing_categories[new_cat.name] = new_cat
+                    created_channels += 1
+                except Exception:
+                    pass
+
+        existing_ch_keys = {(c.name, c.category.name if c.category else None) for c in guild.channels if not isinstance(c, discord.CategoryChannel)}
+        for ch_info in all_channels_data:
+            ch_type = ch_info.get("type", "")
+            if ch_type == "category":
+                continue
+
+            cat_name = ch_info.get("category")
+            key = (ch_info["name"], cat_name)
+            if key not in existing_ch_keys:
+                category_obj = existing_categories.get(cat_name) if cat_name else None
+                try:
+                    if "text" in ch_type or "news" in ch_type:
+                        await guild.create_text_channel(
+                            name=ch_info["name"],
+                            category=category_obj,
+                            topic=ch_info.get("topic"),
+                            reason=f"FloryGuard Restore from {snapshot_id}"
+                        )
                         created_channels += 1
                     elif "voice" in ch_type:
-                        await guild.create_voice_channel(name=ch_info["name"], reason=f"FloryGuard Restore from {snapshot_id}")
+                        await guild.create_voice_channel(
+                            name=ch_info["name"],
+                            category=category_obj,
+                            reason=f"FloryGuard Restore from {snapshot_id}"
+                        )
                         created_channels += 1
+                    elif "stage" in ch_type:
+                        await guild.create_stage_channel(
+                            name=ch_info["name"],
+                            category=category_obj,
+                            reason=f"FloryGuard Restore from {snapshot_id}"
+                        )
+                        created_channels += 1
+                    elif "forum" in ch_type:
+                        await guild.create_forum(
+                            name=ch_info["name"],
+                            category=category_obj,
+                            topic=ch_info.get("topic"),
+                            reason=f"FloryGuard Restore from {snapshot_id}"
+                        )
+                        created_channels += 1
+                    existing_ch_keys.add(key)
                 except Exception:
                     pass
 
@@ -513,7 +564,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
             description=(
                 f"Снимок: `{snapshot_id}`\n"
                 f"Восстановлено недостающих ролей: **{created_roles}**\n"
-                f"Восстановлено недостающих каналов: **{created_channels}**"
+                f"Восстановлено недостающих каналов и категорий: **{created_channels}**"
             ),
             color=COLOR_SUCCESS
         )
@@ -563,7 +614,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
 
         try:
             await user.add_roles(role, reason=f"FloryGuard: /addrole от {interaction.user} (ID: {interaction.user.id})")
-            
+
             embed = create_security_embed(
                 title="🎭 РОЛЬ УСПЕШНО ВЫДАНА",
                 description=(
@@ -621,7 +672,7 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
 
         try:
             await user.remove_roles(role, reason=f"FloryGuard: /removerole от {interaction.user} (ID: {interaction.user.id})")
-            
+
             embed = create_security_embed(
                 title="🎭 РОЛЬ УСПЕШНО СНЯТА",
                 description=(

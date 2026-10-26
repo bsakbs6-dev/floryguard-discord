@@ -1,10 +1,10 @@
 import asyncio
 import discord
 from discord.ext import commands
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Tuple
+from datetime import datetime, timezone
+from typing import Optional, Tuple, Union
 
-from core.permissions import is_authorized_guild, is_admin, is_whitelisted, is_senior_admin, has_permission
+from core.permissions import is_module_enabled, is_whitelisted, has_permission
 from utils.logger import logger
 from utils.embeds import anti_nuke_alert_embed
 
@@ -20,18 +20,29 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     async def _get_audit_executor(
         self,
         guild: discord.Guild,
-        action: discord.AuditLogAction,
+        action: Union[discord.AuditLogAction, Tuple[discord.AuditLogAction, ...]],
         target_id: Optional[int] = None,
         max_age_seconds: float = 6.0
-    ) -> Optional[discord.Member]:
+    ) -> Optional[Union[discord.Member, discord.User]]:
         """
         Safely look up the responsible moderator in the server's audit logs.
+        Supports either a single AuditLogAction or a tuple of actions.
         """
         await asyncio.sleep(0.6)  # Give Discord audit logs a moment to register
         now = datetime.now(timezone.utc)
 
         try:
-            async for entry in guild.audit_logs(limit=5, action=action):
+            if isinstance(action, tuple):
+                entries_iter = guild.audit_logs(limit=10)
+                allowed_actions = set(action)
+            else:
+                entries_iter = guild.audit_logs(limit=5, action=action)
+                allowed_actions = {action}
+
+            async for entry in entries_iter:
+                if entry.action not in allowed_actions:
+                    continue
+
                 time_diff = (now - entry.created_at).total_seconds()
                 if time_diff > max_age_seconds:
                     continue
@@ -43,7 +54,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
                     # Ignore bot's own automated actions
                     if entry.user.id == self.bot.user.id:
                         return None
-                    
+
                     member = guild.get_member(entry.user.id)
                     if member:
                         return member
@@ -59,7 +70,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     # ==========================================
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: discord.User | discord.Member):
-        if not is_authorized_guild(guild):
+        if not is_module_enabled(guild, "anti_nuke_enabled"):
             return
 
         executor = await self._get_audit_executor(guild, discord.AuditLogAction.ban, target_id=user.id)
@@ -101,7 +112,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     @commands.Cog.listener()
     async def on_member_remove(self, member: discord.Member):
         guild = member.guild
-        if not is_authorized_guild(guild):
+        if not is_module_enabled(guild, "anti_nuke_enabled"):
             return
 
         executor = await self._get_audit_executor(guild, discord.AuditLogAction.kick, target_id=member.id)
@@ -132,7 +143,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     # ==========================================
     @commands.Cog.listener()
     async def on_guild_update(self, before: discord.Guild, after: discord.Guild):
-        if not is_authorized_guild(after):
+        if not is_module_enabled(after, "anti_nuke_enabled"):
             return
 
         changed = (before.name != after.name or before.icon != after.icon or before.description != after.description)
@@ -186,7 +197,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel):
         guild = channel.guild
-        if not is_authorized_guild(guild):
+        if not is_module_enabled(guild, "anti_nuke_enabled"):
             return
 
         executor = await self._get_audit_executor(guild, discord.AuditLogAction.channel_delete, target_id=channel.id)
@@ -206,7 +217,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
             position = channel.position
 
             if isinstance(channel, discord.TextChannel):
-                new_ch = await guild.create_text_channel(
+                await guild.create_text_channel(
                     name=channel.name,
                     category=category,
                     topic=channel.topic,
@@ -218,7 +229,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
                 )
                 rollback_ok = True
             elif isinstance(channel, discord.VoiceChannel):
-                new_ch = await guild.create_voice_channel(
+                await guild.create_voice_channel(
                     name=channel.name,
                     category=category,
                     bitrate=channel.bitrate,
@@ -229,11 +240,30 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
                 )
                 rollback_ok = True
             elif isinstance(channel, discord.CategoryChannel):
-                new_ch = await guild.create_category(
+                await guild.create_category(
                     name=channel.name,
                     overwrites=overwrites,
                     position=position,
                     reason="FloryGuard Anti-Nuke: Восстановление категории"
+                )
+                rollback_ok = True
+            elif isinstance(channel, discord.StageChannel):
+                await guild.create_stage_channel(
+                    name=channel.name,
+                    category=category,
+                    overwrites=overwrites,
+                    position=position,
+                    reason="FloryGuard Anti-Nuke: Восстановление трибуны"
+                )
+                rollback_ok = True
+            elif isinstance(channel, discord.ForumChannel):
+                await guild.create_forum(
+                    name=channel.name,
+                    category=category,
+                    topic=channel.topic,
+                    overwrites=overwrites,
+                    position=position,
+                    reason="FloryGuard Anti-Nuke: Восстановление форума"
                 )
                 rollback_ok = True
         except Exception as e:
@@ -264,7 +294,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     @commands.Cog.listener()
     async def on_guild_channel_create(self, channel: discord.abc.GuildChannel):
         guild = channel.guild
-        if not is_authorized_guild(guild):
+        if not is_module_enabled(guild, "anti_nuke_enabled"):
             return
 
         executor = await self._get_audit_executor(guild, discord.AuditLogAction.channel_create, target_id=channel.id)
@@ -309,7 +339,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     @commands.Cog.listener()
     async def on_guild_channel_update(self, before: discord.abc.GuildChannel, after: discord.abc.GuildChannel):
         guild = after.guild
-        if not is_authorized_guild(guild):
+        if not is_module_enabled(guild, "anti_nuke_enabled"):
             return
 
         # Check if meaningful properties changed
@@ -318,13 +348,24 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
             changed = True
         elif before.overwrites != after.overwrites:
             changed = True
+        elif getattr(before, "nsfw", False) != getattr(after, "nsfw", False):
+            changed = True
+        elif getattr(before, "slowmode_delay", 0) != getattr(after, "slowmode_delay", 0):
+            changed = True
 
         if not changed:
             return
 
-        executor = await self._get_audit_executor(guild, discord.AuditLogAction.channel_update, target_id=after.id)
-        if not executor:
-            executor = await self._get_audit_executor(guild, discord.AuditLogAction.channel_overwrite_update, target_id=after.id)
+        executor = await self._get_audit_executor(
+            guild,
+            (
+                discord.AuditLogAction.channel_update,
+                discord.AuditLogAction.channel_overwrite_create,
+                discord.AuditLogAction.channel_overwrite_update,
+                discord.AuditLogAction.channel_overwrite_delete,
+            ),
+            target_id=after.id
+        )
 
         if not executor or executor.id == self.bot.user.id:
             return
@@ -341,11 +382,13 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
                 await after.edit(
                     name=before.name,
                     topic=before.topic,
+                    nsfw=before.nsfw,
+                    slowmode_delay=before.slowmode_delay,
                     overwrites=before.overwrites,
                     reason="FloryGuard Anti-Nuke: Откат настроек канала"
                 )
                 rollback_ok = True
-            elif isinstance(after, discord.VoiceChannel) and isinstance(before, discord.VoiceChannel):
+            elif isinstance(after, (discord.VoiceChannel, discord.StageChannel, discord.CategoryChannel, discord.ForumChannel)):
                 await after.edit(
                     name=before.name,
                     overwrites=before.overwrites,
@@ -379,7 +422,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     @commands.Cog.listener()
     async def on_guild_role_delete(self, role: discord.Role):
         guild = role.guild
-        if not is_authorized_guild(guild):
+        if not is_module_enabled(guild, "anti_nuke_enabled"):
             return
 
         executor = await self._get_audit_executor(guild, discord.AuditLogAction.role_delete, target_id=role.id)
@@ -404,7 +447,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
             )
             # Try to place near previous position
             try:
-                await new_role.edit(position=max(1, role.position))
+                await new_role.edit(position=max(1, min(role.position, guild.me.top_role.position - 1)))
             except Exception:
                 pass
             rollback_ok = True
@@ -435,7 +478,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     @commands.Cog.listener()
     async def on_guild_role_create(self, role: discord.Role):
         guild = role.guild
-        if not is_authorized_guild(guild):
+        if not is_module_enabled(guild, "anti_nuke_enabled"):
             return
 
         executor = await self._get_audit_executor(guild, discord.AuditLogAction.role_create, target_id=role.id)
@@ -473,15 +516,21 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         await self.bot.send_security_log(guild, embed)
 
     # ==========================================
-    # 7. ROLE UPDATE PROTECTION (PERMISSIONS / NAME)
+    # 7. ROLE UPDATE PROTECTION (PERMISSIONS / NAME / COLOR)
     # ==========================================
     @commands.Cog.listener()
     async def on_guild_role_update(self, before: discord.Role, after: discord.Role):
         guild = after.guild
-        if not is_authorized_guild(guild):
+        if not is_module_enabled(guild, "anti_nuke_enabled"):
             return
 
-        if before.permissions == after.permissions and before.name == after.name:
+        if (
+            before.permissions == after.permissions
+            and before.name == after.name
+            and before.color == after.color
+            and before.hoist == after.hoist
+            and before.mentionable == after.mentionable
+        ):
             return
 
         executor = await self._get_audit_executor(guild, discord.AuditLogAction.role_update, target_id=after.id)
@@ -525,20 +574,64 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         await self.bot.send_security_log(guild, embed)
 
     # ==========================================
-    # 8. MEMBER ROLE TAMPERING (ПКМ / CONTEXT MENU)
+    # 8. MEMBER ROLE & TIMEOUT TAMPERING (ПКМ / CONTEXT MENU)
     # ==========================================
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member):
         guild = after.guild
-        if not is_authorized_guild(guild):
+        if not is_module_enabled(guild, "anti_nuke_enabled"):
             return
 
-        # Note: Timeouts are explicitly allowed! (timed_out_until check)
+        # 8.1 Check if Timeout changed
         if before.timed_out_until != after.timed_out_until:
+            executor = await self._get_audit_executor(guild, discord.AuditLogAction.member_update, target_id=after.id)
+            if not executor or executor.id == self.bot.user.id:
+                return
+
+            if await has_permission(guild.id, executor.id, "timeout_members"):
+                return
+
+            logger.warning(f"UNAUTHORIZED TIMEOUT CHANGE in {guild.name} by {executor.name} on target {after.name}")
+            rollback_ok = False
+            try:
+                await after.timeout(before.timed_out_until, reason="FloryGuard Anti-Nuke: Откат несанкционированного таймаута")
+                rollback_ok = True
+            except Exception as e:
+                logger.error(f"Failed to rollback timeout for {after.name}: {e}")
+
+            warn_count = 0
+            if isinstance(executor, discord.Member):
+                _, warn_count, _ = await self.bot.issue_warning_and_check(
+                    guild=guild,
+                    member=executor,
+                    reason=f"Несанкционированное изменение таймаута у {after.name}"
+                )
+
+            embed = anti_nuke_alert_embed(
+                action_type="Выдача/Снятие таймаута (Мут)",
+                executor=executor,
+                target_info=f"{after.name} ({after.id})",
+                rollback_status="Статус таймаута возвращен" if rollback_ok else "Ошибка отката",
+                warn_count=warn_count
+            )
+            await self.bot.send_security_log(guild, embed)
             return
 
-        # Check if roles were added or removed
+        # 8.2 Check if roles were added or removed
         if set(before.roles) == set(after.roles):
+            return
+
+        guild_role_ids = {r.id for r in guild.roles}
+        added_roles = [
+            r for r in (set(after.roles) - set(before.roles))
+            if not r.is_default() and not r.managed
+        ]
+        removed_roles = [
+            r for r in (set(before.roles) - set(after.roles))
+            if not r.is_default() and not r.managed and r.id in guild_role_ids
+        ]
+
+        if not added_roles and not removed_roles:
             return
 
         executor = await self._get_audit_executor(guild, discord.AuditLogAction.member_role_update, target_id=after.id)
@@ -548,14 +641,20 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
         if await has_permission(guild.id, executor.id, "roles_assign"):
             return
 
-        # Roles were altered by someone who is not in Admin list
         logger.warning(f"UNAUTHORIZED ROLE ASSIGNMENT in {guild.name} by {executor.name} on target {after.name}")
 
-        # Rollback roles on the target member
+        # Rollback roles on the target member safely using add_roles / remove_roles
         rollback_ok = False
+        bot_top_role = guild.me.top_role
         try:
-            await after.edit(roles=before.roles, reason="FloryGuard Anti-Nuke: Откат выдачи/снятия ролей")
-            rollback_ok = True
+            removable = [r for r in added_roles if r < bot_top_role]
+            restorable = [r for r in removed_roles if r < bot_top_role]
+            if removable:
+                await after.remove_roles(*removable, reason="FloryGuard Anti-Nuke: Откат выдачи ролей")
+                rollback_ok = True
+            if restorable:
+                await after.add_roles(*restorable, reason="FloryGuard Anti-Nuke: Откат снятия ролей")
+                rollback_ok = True
         except Exception as e:
             logger.error(f"Failed to rollback roles for {after.name}: {e}")
 
@@ -583,7 +682,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         guild = member.guild
-        if not is_authorized_guild(guild):
+        if not is_module_enabled(guild, "anti_nuke_enabled"):
             return
 
         if not member.bot:
@@ -635,10 +734,11 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
     @commands.Cog.listener()
     async def on_webhooks_update(self, channel: discord.abc.GuildChannel):
         guild = channel.guild
-        if not is_authorized_guild(guild):
+        if not is_module_enabled(guild, "anti_nuke_enabled"):
             return
 
-        executor = await self._get_audit_executor(guild, discord.AuditLogAction.webhook_create, target_id=channel.id)
+        # Note: In Discord Audit Log for webhook_create, entry.target is the Webhook (not the channel)
+        executor = await self._get_audit_executor(guild, discord.AuditLogAction.webhook_create, target_id=None)
         if not executor or executor.id == self.bot.user.id:
             return
 

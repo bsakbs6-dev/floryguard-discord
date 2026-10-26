@@ -1,7 +1,7 @@
 {
   "bot_info": {
     "name": "FloryGuardBot",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "owner": "Devil_First_More",
     "developer_discord": "devilfade",
     "developer_telegram": "@FloryShopDev",
@@ -16,6 +16,24 @@
     ],
     "senior_admin_ids": [
       1291370925303795733
+    ]
+  },
+  "staff": {
+    "staff_access_role_id": 1548650810622222387,
+    "warn_access_role_id": 1454703598834421831,
+    "trainee_role_id": 1454703157677395969,
+    "trainee_max_warns": 1,
+    "default_staff_max_warns": 3,
+    "default_daily_norm_hours": 3.0,
+    "roles_hierarchy": [
+      { "role_id": 1391723885900333214, "name": "Высшая Администрация", "daily_norm_hours": 4.0 },
+      { "role_id": 1548646933101420564, "name": "Администрация", "daily_norm_hours": 4.0 },
+      { "role_id": 1454703503292502155, "name": "Куратор", "daily_norm_hours": 3.5 },
+      { "role_id": 1548961652899061841, "name": "Гл. Модер | Зам. Куратора", "daily_norm_hours": 3.5 },
+      { "role_id": 1478446161810690159, "name": "Ст. Модер", "daily_norm_hours": 3.0 },
+      { "role_id": 1454703438989492389, "name": "Модер", "daily_norm_hours": 3.0 },
+      { "role_id": 1454703334459048000, "name": "Хелпер", "daily_norm_hours": 2.5 },
+      { "role_id": 1454703157677395969, "name": "Стажер", "daily_norm_hours": 2.0 }
     ]
   },
   "authorized_guilds": {

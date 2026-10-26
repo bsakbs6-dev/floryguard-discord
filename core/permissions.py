@@ -1,7 +1,21 @@
 import discord
-from typing import Optional
+from typing import Optional, Tuple
 
-from config import OWNER_IDS, SENIOR_ADMIN_IDS, AUTHORIZED_GUILDS, UNAUTHORIZED_MESSAGE
+from config import (
+    OWNER_IDS,
+    SENIOR_ADMIN_IDS,
+    AUTHORIZED_GUILDS,
+    UNAUTHORIZED_MESSAGE,
+    STAFF_ACCESS_ROLE_ID,
+    WARN_ACCESS_ROLE_ID,
+    TRAINEE_ROLE_ID,
+    TRAINEE_MAX_WARNS,
+    DEFAULT_STAFF_MAX_WARNS,
+    DEFAULT_DAILY_NORM_HOURS,
+    STAFF_HIERARCHY,
+    STAFF_ROLE_DAILY_NORM_HOURS,
+    STAFF_ROLE_IDS,
+)
 from database.db import db
 
 
@@ -10,6 +24,13 @@ def is_authorized_guild(guild: Optional[discord.Guild]) -> bool:
     if guild is None:
         return False
     return guild.id in AUTHORIZED_GUILDS
+
+
+def is_module_enabled(guild: Optional[discord.Guild], module_key: str) -> bool:
+    """Checks if a specific security module (automod_enabled, anti_nuke_enabled, anti_raid_enabled) is enabled."""
+    if not is_authorized_guild(guild):
+        return False
+    return bool(AUTHORIZED_GUILDS[guild.id].get(module_key, True))
 
 
 def get_guild_quarantine_role_id(guild: discord.Guild) -> Optional[int]:
@@ -49,6 +70,70 @@ def is_senior_admin(user_id: int, guild_id: Optional[int] = None) -> bool:
         if user_id in guild_senior_admins:
             return True
     return False
+
+
+def has_staff_access(member: discord.Member) -> bool:
+    """
+    Checks if member has access to staff commands:
+    Requires role 1548650810622222387 (STAFF_ACCESS_ROLE_ID), any role in STAFF_HIERARCHY,
+    or Senior Admin / Bot Owner status.
+    """
+    if is_senior_admin(member.id, member.guild.id):
+        return True
+    member_role_ids = {r.id for r in member.roles}
+    if STAFF_ACCESS_ROLE_ID in member_role_ids:
+        return True
+    if member_role_ids & STAFF_ROLE_IDS:
+        return True
+    return False
+
+
+def has_warn_access(member: discord.Member) -> bool:
+    """
+    Checks if member can issue/manage staff reprimands (/warn):
+    Requires role 1454703598834421831 (WARN_ACCESS_ROLE_ID) or Senior Admin / Owner.
+    """
+    if is_senior_admin(member.id, member.guild.id):
+        return True
+    member_role_ids = {r.id for r in member.roles}
+    return WARN_ACCESS_ROLE_ID in member_role_ids
+
+
+def get_member_staff_rank(member: discord.Member) -> Tuple[str, int, bool, int]:
+    """
+    Determines the staff member's highest rank from the 8-tier STAFF_HIERARCHY.
+    Returns: (rank_name, max_warns, is_trainee, hierarchy_index)
+    Lower hierarchy_index means higher authority (0 = Высшая Администрация, 7 = Стажер).
+    """
+    member_role_ids = {r.id for r in member.roles}
+
+    for idx, (role_id, role_name) in enumerate(STAFF_HIERARCHY):
+        if role_id in member_role_ids:
+            is_trainee = (role_id == TRAINEE_ROLE_ID)
+            max_warns = TRAINEE_MAX_WARNS if is_trainee else DEFAULT_STAFF_MAX_WARNS
+            return role_name, max_warns, is_trainee, idx
+
+    if is_bot_owner(member.id, member.guild.id):
+        return "Владелец", DEFAULT_STAFF_MAX_WARNS, False, -2
+    if is_senior_admin(member.id, member.guild.id):
+        return "Высшая Администрация", DEFAULT_STAFF_MAX_WARNS, False, -1
+    if STAFF_ACCESS_ROLE_ID in member_role_ids:
+        return "Стафф", DEFAULT_STAFF_MAX_WARNS, False, 99
+
+    return "Участник", DEFAULT_STAFF_MAX_WARNS, False, 100
+
+
+def get_member_daily_norm_seconds(member: discord.Member) -> int:
+    """
+    Returns the daily online norm in seconds based on the member's highest staff role.
+    Each rank in STAFF_HIERARCHY can have its own daily_norm_hours configured.
+    """
+    member_role_ids = {r.id for r in member.roles}
+    for role_id, _ in STAFF_HIERARCHY:
+        if role_id in member_role_ids:
+            hours = STAFF_ROLE_DAILY_NORM_HOURS.get(role_id, DEFAULT_DAILY_NORM_HOURS)
+            return max(60, int(hours * 3600))
+    return max(60, int(DEFAULT_DAILY_NORM_HOURS * 3600))
 
 
 AVAILABLE_PERMISSIONS = {
@@ -131,7 +216,7 @@ AVAILABLE_PERMISSIONS = {
     "webhooks_manage": {
         "label": "Управление вебхуками",
         "emoji": "🔗",
-        "description": "Создание, правка и удаление вебхуков в каналах",
+        "description": "Создание, правка и удаление вебхуками в каналах",
         "category": "server"
     },
 }
@@ -162,7 +247,10 @@ async def has_permission(guild_id: int, user_id: int, permission: str) -> bool:
         perms_str = admin.get("permissions") or "all"
         if perms_str == "all" or "*" in perms_str:
             return True
-        perms_list = [p.strip() for p in perms_str.split(",") if p.strip()]
+        if perms_str == "none":
+            perms_list = []
+        else:
+            perms_list = [p.strip() for p in perms_str.split(",") if p.strip() and p.strip() != "none"]
         if permission in perms_list:
             return True
 
@@ -195,7 +283,12 @@ async def get_admin_info(guild_id: int, user_id: int) -> dict:
         title = admin.get("title") or "Администратор Безопасности"
         perms_str = admin.get("permissions") or "all"
         is_full = (perms_str == "all" or "*" in perms_str)
-        perms_list = list(AVAILABLE_PERMISSIONS.keys()) if is_full else [p.strip() for p in perms_str.split(",") if p.strip()]
+        if is_full:
+            perms_list = list(AVAILABLE_PERMISSIONS.keys())
+        elif perms_str == "none":
+            perms_list = []
+        else:
+            perms_list = [p.strip() for p in perms_str.split(",") if p.strip() and p.strip() != "none"]
         return {
             "rank": "admin",
             "title": title,
@@ -232,4 +325,3 @@ async def is_whitelisted(guild_id: int, user_id: int) -> bool:
 async def can_manage_security(guild_id: int, user_id: int) -> bool:
     """Check if user can manage whitelist and admins (Owner & Senior Admins)."""
     return is_senior_admin(user_id, guild_id)
-
