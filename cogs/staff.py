@@ -164,18 +164,21 @@ class StaffCog(commands.Cog, name="Staff"):
         stats = await db.get_staff_stats(interaction.guild.id, target.id, fallback_nicks=candidate_nicks)
 
         # 2. Determine Staff Rank, Reprimand Limit & Daily Norm
-        rank_name, max_warns, _, _ = get_member_staff_rank(target)
+        rank_name, max_warns, _, target_idx = get_member_staff_rank(target)
         role_norm_seconds = get_member_daily_norm_seconds(target)
 
         mc_group = (stats.get("primary_group") or "").lower() if stats else ""
-        if mc_group in MC_GROUP_TO_RANK:
+        if not target.bot and mc_group in MC_GROUP_TO_RANK:
             mc_rank_name, mc_role_id = MC_GROUP_TO_RANK[mc_group]
             rank_name = mc_rank_name
             max_warns = TRAINEE_MAX_WARNS if mc_role_id == TRAINEE_ROLE_ID else DEFAULT_STAFF_MAX_WARNS
             role_norm_seconds = int(STAFF_ROLE_DAILY_NORM_HOURS.get(mc_role_id, 3.0) * 3600)
+            target_idx = 7 if mc_role_id == TRAINEE_ROLE_ID else 5
 
-        # 3. Fetch active reprimands count from Discord DB
-        active_warns = await db.get_active_warn_count(interaction.guild.id, target.id)
+        is_staff = (not target.bot) and (rank_name != "Участник") and (target_idx < 100)
+
+        # 3. Fetch active reprimands count from Discord DB (only for staff members)
+        active_warns = await db.get_active_warn_count(interaction.guild.id, target.id) if is_staff else 0
 
         display_nick = (
             (stats.get("minecraft_nick") if stats and stats.get("minecraft_nick") else None)
@@ -184,10 +187,10 @@ class StaffCog(commands.Cog, name="Staff"):
         )
         online_seconds = int(stats.get("online_seconds", 0)) if stats else 0
         norm_seconds = int(stats["norm_seconds"]) if (stats and stats.get("norm_seconds")) else role_norm_seconds
-        warns_issued = int(stats.get("warns_issued") or 0) if stats else 0
-        bans_issued = int(stats.get("bans_issued") or 0) if stats else 0
-        reports_accepted = int(stats.get("reports_accepted") or 0) if stats else 0
-        mutes_issued = int(stats.get("mutes_issued") or 0) if stats else 0
+        warns_issued = int(stats.get("warns_issued") or 0) if (stats and is_staff) else (0 if is_staff else None)
+        bans_issued = int(stats.get("bans_issued") or 0) if (stats and is_staff) else (0 if is_staff else None)
+        reports_accepted = int(stats.get("reports_accepted") or 0) if (stats and is_staff) else (0 if is_staff else None)
+        mutes_issued = int(stats.get("mutes_issued") or 0) if (stats and is_staff) else (0 if is_staff else None)
 
         # 4. Download user's Discord avatar (falls back to requester's avatar if needed)
         avatar_bytes = None
@@ -214,6 +217,7 @@ class StaffCog(commands.Cog, name="Staff"):
                 bans_issued=bans_issued,
                 reports_accepted=reports_accepted,
                 mutes_issued=mutes_issued,
+                is_staff=is_staff,
             )
             file = discord.File(fp=image_buffer, filename=f"staff_profile_{target.id}.png")
             await interaction.followup.send(file=file)

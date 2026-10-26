@@ -110,17 +110,23 @@ def _draw_icon(draw: ImageDraw.ImageDraw, icon_type: str, x: int, y: int, color:
         draw.line([(x + 3, y + 3), (x + 25, y + 27)], fill=(255, 165, 0, 230), width=3)
 
 
-def _draw_watermark_status(card: Image.Image, icon_type: str):
-    """Draws a subtle decorative circle and check accent on the right side of a dark stat card."""
+def _draw_watermark_status(card: Image.Image, available: bool):
+    """Draws a subtle decorative circle and check (✔) or cross (✖) on the right side of a dark stat card."""
     overlay = Image.new("RGBA", card.size, (0, 0, 0, 0))
     odraw = ImageDraw.Draw(overlay)
     w, h = card.size
     cx, cy = w - 65, h // 2 + 6
 
     r = 58
-    odraw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(255, 180, 40, 14))
-    cut_col = (26, 22, 19, 255)
-    odraw.line([(cx - 22, cy + 2), (cx - 6, cy + 18), (cx + 24, cy - 16)], fill=cut_col, width=10)
+    if available:
+        odraw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(255, 180, 40, 14))
+        cut_col = (26, 22, 19, 255)
+        odraw.line([(cx - 22, cy + 2), (cx - 6, cy + 18), (cx + 24, cy - 16)], fill=cut_col, width=10)
+    else:
+        odraw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(255, 255, 255, 10))
+        cut_col = (26, 22, 19, 255)
+        odraw.line([(cx - 20, cy - 20), (cx + 20, cy + 20)], fill=cut_col, width=10)
+        odraw.line([(cx + 20, cy - 20), (cx - 20, cy + 20)], fill=cut_col, width=10)
 
     card.alpha_composite(overlay)
 
@@ -137,6 +143,7 @@ def generate_staff_profile_card(
     bans_issued: Optional[int] = 0,
     reports_accepted: Optional[int] = 0,
     mutes_issued: Optional[int] = 0,
+    is_staff: bool = True,
 ) -> io.BytesIO:
     """
     Generates a high-resolution FloryMine yellow-orange themed Staff Profile Card PNG.
@@ -207,7 +214,7 @@ def generate_staff_profile_card(
     # =========================================================================
     # CARD 2: ВЫГОВОРЫ (Top-Right of Left Grid, Golden-Orange / Amber Gradient)
     # =========================================================================
-    has_warns = active_warns > 0
+    has_warns = is_staff and active_warns > 0
     warn_top_col = (255, 155, 15) if not has_warns else (245, 95, 25)
     warn_bot_col = (220, 95, 0) if not has_warns else (195, 40, 15)
 
@@ -219,28 +226,38 @@ def generate_staff_profile_card(
     wm2 = Image.new("RGBA", (card_w, top_card_h), (0, 0, 0, 0))
     wmd2 = ImageDraw.Draw(wm2)
     wmd2.ellipse((card_w - 135, 50, card_w + 25, 210), fill=(120, 40, 0, 45))
+    if not is_staff:
+        wcx, wcy = card_w - 55, 130
+        wmd2.line([(wcx - 20, wcy - 20), (wcx + 20, wcy + 20)], fill=(235, 115, 10, 150), width=10)
+        wmd2.line([(wcx + 20, wcy - 20), (wcx - 20, wcy + 20)], fill=(235, 115, 10, 150), width=10)
     wm2.putalpha(Image.composite(wm2.getchannel("A"), Image.new("L", (card_w, top_card_h), 0), warn_card.getchannel("A")))
     warn_card.alpha_composite(wm2)
 
     w_draw = ImageDraw.Draw(warn_card)
     w_draw.text((26, 22), "Выговоры", font=font_label, fill=(255, 245, 220, 235))
-    w_draw.text((26, 66), f"{active_warns}/{max_warns}", font=font_big_pct, fill=(255, 255, 255, 255))
-    limit_note = "Лимит стажера: 1 выговор" if max_warns == 1 else f"Лимит должности: {max_warns}"
-    w_draw.text((26, 162), limit_note, font=font_online_sub, fill=(255, 240, 200, 225))
+    if is_staff:
+        w_draw.text((26, 66), f"{active_warns}/{max_warns}", font=font_big_pct, fill=(255, 255, 255, 255))
+        limit_note = "Лимит стажера: 1 выговор" if max_warns == 1 else f"Лимит должности: {max_warns}"
+        w_draw.text((26, 162), limit_note, font=font_online_sub, fill=(255, 240, 200, 225))
+    else:
+        font_warn_unavail = _load_font(38, bold=True)
+        w_draw.text((26, 82), "Недоступно", font=font_warn_unavail, fill=(255, 255, 255, 255))
+        w_draw.text((26, 162), "Нет должности модерации", font=font_online_sub, fill=(255, 240, 200, 215))
 
     base.alpha_composite(warn_card, (col2_x, row1_y))
 
     # =========================================================================
     # CARDS 3..6: 4 DARK STAT CARDS (2x2 Grid)
     # =========================================================================
+    font_stat_unavail = _load_font(28, bold=True)
     stat_items = [
-        (col1_x, row2_y, "shield", "Выдано варнов", int(warns_issued or 0)),
-        (col2_x, row2_y, "gavel", "Выдано банов", int(bans_issued or 0)),
-        (col1_x, row3_y, "report", "Принятые репорты", int(reports_accepted or 0)),
-        (col2_x, row3_y, "mute", "Выдано мутов", int(mutes_issued or 0)),
+        (col1_x, row2_y, "shield", "Выдано варнов", warns_issued if is_staff else None),
+        (col2_x, row2_y, "gavel", "Выдано банов", bans_issued if is_staff else None),
+        (col1_x, row3_y, "report", "Принятые репорты", reports_accepted if is_staff else None),
+        (col2_x, row3_y, "mute", "Выдано мутов", mutes_issued if is_staff else None),
     ]
 
-    for sx, sy, icon_name, label_text, num_val in stat_items:
+    for sx, sy, icon_name, label_text, raw_val in stat_items:
         scard = Image.new("RGBA", (card_w, stat_card_h), (0, 0, 0, 0))
         sdraw = ImageDraw.Draw(scard)
         sdraw.rounded_rectangle(
@@ -251,13 +268,17 @@ def generate_staff_profile_card(
             width=1,
         )
 
-        _draw_watermark_status(scard, icon_name)
+        available = is_staff and (raw_val is not None)
+        _draw_watermark_status(scard, available)
 
         icon_col = (255, 180, 40, 220)
         _draw_icon(sdraw, icon_name, 26, 26, icon_col)
 
         sdraw.text((26, 98), label_text, font=font_stat_label, fill=(165, 156, 145, 255))
-        sdraw.text((26, 130), str(num_val), font=font_stat_val, fill=(255, 255, 255, 255))
+        if available:
+            sdraw.text((26, 130), str(int(raw_val or 0)), font=font_stat_val, fill=(255, 255, 255, 255))
+        else:
+            sdraw.text((26, 134), "Недоступно", font=font_stat_unavail, fill=(235, 230, 225, 245))
 
         base.alpha_composite(scard, (sx, sy))
 

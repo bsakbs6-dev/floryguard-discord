@@ -177,6 +177,13 @@ class ModerationCog(commands.Cog, name="Moderation"):
             )
             return
 
+        if user.bot:
+            await interaction.response.send_message(
+                "❌ Невозможно выдать выговор боту.",
+                ephemeral=True,
+            )
+            return
+
         if user.id == interaction.user.id:
             await interaction.response.send_message("❌ Вы не можете выдать выговор самому себе.", ephemeral=True)
             return
@@ -185,9 +192,16 @@ class ModerationCog(commands.Cog, name="Moderation"):
             await interaction.response.send_message("❌ Невозможно выдать выговор Владельцу.", ephemeral=True)
             return
 
-        # Check hierarchy order
+        # Check hierarchy order & ensure target has a moderation position
         _, _, _, invoker_idx = get_member_staff_rank(interaction.user)
         target_rank_name, max_warns, is_trainee, target_idx = get_member_staff_rank(user)
+
+        if target_rank_name == "Участник" or target_idx >= 100:
+            await interaction.response.send_message(
+                "❌ Обычные игроки без должности модерации проекта не могут получить выговор стаффа!",
+                ephemeral=True,
+            )
+            return
 
         if not is_senior_admin(interaction.user.id, interaction.guild.id) and target_idx <= invoker_idx:
             await interaction.response.send_message(
@@ -325,7 +339,13 @@ class ModerationCog(commands.Cog, name="Moderation"):
             )
             return
 
-        rank_name, max_warns, _, _ = get_member_staff_rank(user)
+        rank_name, max_warns, _, target_idx = get_member_staff_rank(user)
+        if user.bot or rank_name == "Участник" or target_idx >= 100:
+            await interaction.response.send_message(
+                f"❌ {user.mention} не имеет должности модерации проекта — обычные игроки не могут получать выговоры.",
+                ephemeral=True,
+            )
+            return
         warnings = await db.get_active_warnings(interaction.guild.id, user.id)
         if not warnings:
             await interaction.response.send_message(
