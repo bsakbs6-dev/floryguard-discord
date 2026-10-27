@@ -129,21 +129,80 @@ class FloryGuardBot(commands.Bot):
         return None
 
     async def send_security_log(self, guild: discord.Guild, embed: discord.Embed):
-        """Send embed to the guild's security log channel."""
+        """Send embed to the guild's security log channel with fallback to text."""
         try:
             log_ch = self.get_log_channel(guild)
-            if log_ch and log_ch.permissions_for(guild.me).send_messages:
-                await log_ch.send(embed=embed)
+            if not log_ch and guild.id in AUTHORIZED_GUILDS:
+                cid = AUTHORIZED_GUILDS[guild.id].get("log_channel_id", 1391723887846490224)
+                log_ch = guild.get_channel(cid)
+                if not log_ch:
+                    try:
+                        log_ch = await self.fetch_channel(cid)
+                    except Exception:
+                        log_ch = None
+
+            if log_ch and isinstance(log_ch, discord.TextChannel):
+                perms = log_ch.permissions_for(guild.me)
+                if not perms.send_messages:
+                    logger.warning(f"Bot lacks Send Messages permission in log channel {log_ch.id}")
+                    return
+
+                if perms.embed_links:
+                    try:
+                        await log_ch.send(embed=embed)
+                        return
+                    except Exception as embed_err:
+                        logger.warning(f"Failed to send embed in log channel, falling back to text: {embed_err}")
+
+                # Text fallback when Embed Links is missing or fails
+                title = f"**{embed.title}**\n\n" if embed.title else ""
+                desc = embed.description or ""
+                fields_text = ""
+                if embed.fields:
+                    fields_text = "\n" + "\n".join(f"**{f.name}:** {f.value}" for f in embed.fields)
+                full_text = f"{title}{desc}{fields_text}".strip()
+                if not full_text:
+                    full_text = "Детали события отсутствуют."
+                await log_ch.send(content=full_text[:2000])
         except Exception as e:
             logger.error(f"Failed to send security log in {guild.name}: {e}")
 
     async def send_channel_log(self, guild: discord.Guild, channel_id: int, embed: discord.Embed) -> bool:
-        """Send embed to a specific designated channel by ID."""
+        """Send embed to a specific designated channel by ID with full error handling and text fallback."""
         try:
             ch = guild.get_channel(channel_id)
-            if ch and isinstance(ch, discord.TextChannel) and ch.permissions_for(guild.me).send_messages:
-                await ch.send(embed=embed)
+            if not ch:
+                try:
+                    ch = await self.fetch_channel(channel_id)
+                except Exception:
+                    ch = None
+
+            if ch and isinstance(ch, discord.TextChannel):
+                perms = ch.permissions_for(guild.me)
+                if not perms.send_messages:
+                    logger.warning(f"Bot lacks Send Messages permission in channel {channel_id} in {guild.name}")
+                    return False
+
+                if perms.embed_links:
+                    try:
+                        await ch.send(embed=embed)
+                        return True
+                    except Exception as embed_err:
+                        logger.warning(f"Failed to send embed to {channel_id}, trying text fallback: {embed_err}")
+
+                # Text fallback so Discord NEVER renders an empty message
+                title = f"**{embed.title}**\n\n" if embed.title else ""
+                desc = embed.description or ""
+                fields_text = ""
+                if embed.fields:
+                    fields_text = "\n" + "\n".join(f"**{f.name}:** {f.value}" for f in embed.fields)
+                full_text = f"{title}{desc}{fields_text}".strip()
+                if not full_text:
+                    full_text = "Детали события отсутствуют."
+                await ch.send(content=full_text[:2000])
                 return True
+            else:
+                logger.warning(f"Could not resolve text channel for ID {channel_id} in {guild.name}")
         except Exception as e:
             logger.error(f"Failed to send log to channel {channel_id} in {guild.name}: {e}")
         return False

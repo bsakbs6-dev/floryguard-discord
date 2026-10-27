@@ -284,8 +284,10 @@ class ModerationCog(commands.Cog, name="Moderation"):
 
         embed = create_security_embed(title="⚠️ ВЫДАН ВЫГОВОР СТАФФА", description=desc, color=color)
         await interaction.followup.send(embed=embed, ephemeral=True)
-        await self.bot.send_security_log(interaction.guild, embed)
         await self.bot.send_channel_log(interaction.guild, WARNS_LOG_CHANNEL_ID, embed)
+        log_ch = self.bot.get_log_channel(interaction.guild)
+        if log_ch and log_ch.id != WARNS_LOG_CHANNEL_ID:
+            await self.bot.send_security_log(interaction.guild, embed)
 
     @app_commands.command(name="unwarn", description="Снять выговор по ID или очистить все выговоры сотрудника")
     @app_commands.describe(
@@ -322,8 +324,10 @@ class ModerationCog(commands.Cog, name="Moderation"):
                     color=COLOR_SUCCESS,
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
-                await self.bot.send_security_log(interaction.guild, embed)
                 await self.bot.send_channel_log(interaction.guild, WARNS_LOG_CHANNEL_ID, embed)
+                log_ch = self.bot.get_log_channel(interaction.guild)
+                if log_ch and log_ch.id != WARNS_LOG_CHANNEL_ID:
+                    await self.bot.send_security_log(interaction.guild, embed)
             else:
                 await interaction.response.send_message(
                     f"❌ Выговор с ID `{warn_id}` не найден или уже истек.",
@@ -337,8 +341,10 @@ class ModerationCog(commands.Cog, name="Moderation"):
                 color=COLOR_SUCCESS,
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
-            await self.bot.send_security_log(interaction.guild, embed)
             await self.bot.send_channel_log(interaction.guild, WARNS_LOG_CHANNEL_ID, embed)
+            log_ch = self.bot.get_log_channel(interaction.guild)
+            if log_ch and log_ch.id != WARNS_LOG_CHANNEL_ID:
+                await self.bot.send_security_log(interaction.guild, embed)
 
     @app_commands.command(name="warns", description="Показать список активных выговоров сотрудника")
     @app_commands.describe(user="Сотрудник для проверки")

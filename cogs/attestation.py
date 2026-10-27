@@ -496,23 +496,21 @@ class AttestationConfirmScheduleView(discord.ui.View):
             logger.error(f"Error sending DM to candidate {self.candidate.id}: {e}")
 
         # 6. Send Audit Log
-        audit_ch = guild.get_channel(CURATORS_AUDIT_CHANNEL_ID)
-        if audit_ch and isinstance(audit_ch, discord.TextChannel):
-            try:
-                audit_embed = attestation_audit_embed(
-                    action_title="🎓 НАЗНАЧЕНА АТТЕСТАЦИЯ КАНДИДАТА",
-                    candidate=self.candidate,
-                    curator=self.invoker,
-                    target_role_name=self.target_role_name,
-                    voice_channel=voice_ch,
-                    scheduled_dt=self.scheduled_dt,
-                    status_text="PENDING (Ожидает проведения)",
-                    color=COLOR_FLORY_ORANGE,
-                    details=f"Попытка: {attempt_num}/{ATTESTATION_MAX_FAILS}\nПримечание: {self.note or 'Нет'}",
-                )
-                await audit_ch.send(embed=audit_embed)
-            except Exception as e:
-                logger.error(f"Failed to post to audit channel {CURATORS_AUDIT_CHANNEL_ID}: {e}")
+        try:
+            audit_embed = attestation_audit_embed(
+                action_title="🎓 НАЗНАЧЕНА АТТЕСТАЦИЯ КАНДИДАТА",
+                candidate=self.candidate,
+                curator=self.invoker,
+                target_role_name=self.target_role_name,
+                voice_channel=voice_ch,
+                scheduled_dt=self.scheduled_dt,
+                status_text="PENDING (Ожидает проведения)",
+                color=COLOR_FLORY_ORANGE,
+                details=f"Попытка: {attempt_num}/{ATTESTATION_MAX_FAILS}\nПримечание: {self.note or 'Нет'}",
+            )
+            await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+        except Exception as e:
+            logger.error(f"Failed to post to audit channel {CURATORS_AUDIT_CHANNEL_ID}: {e}")
 
         # 7. Response to Curator
         status_note = ""
@@ -620,6 +618,22 @@ class AttestationVerdictView(discord.ui.View):
 
         await db.cancel_attestation(att_id, reason=f"Отменено куратором {self.invoker.name}")
         await revoke_attestation_voice_access(guild, voice_id, self.candidate)
+
+        try:
+            audit_embed = attestation_audit_embed(
+                action_title="🛑 АТТЕСТАЦИЯ ОТМЕНЕНА КУРАТОРОМ",
+                candidate=self.candidate,
+                curator=self.invoker,
+                target_role_name=self.attestation.get("target_role_name", "Не указана"),
+                voice_channel=guild.get_channel(voice_id),
+                scheduled_dt=None,
+                status_text="CANCELLED (Отменена)",
+                color=COLOR_WARNING,
+                details=f"Причина: Отменено куратором {self.invoker.name}",
+            )
+            await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+        except Exception as e:
+            logger.error(f"Failed to post cancel audit: {e}")
 
         embed = _create_design_embed(
             title="🛑 АТТЕСТАЦИЯ ОТМЕНЕНА",
@@ -731,23 +745,21 @@ class AttestationPassModal(discord.ui.Modal, title="✅ Успешное про�
             pass
 
         # 6. Post to Curators Audit Channel
-        audit_ch = guild.get_channel(CURATORS_AUDIT_CHANNEL_ID)
-        if audit_ch and isinstance(audit_ch, discord.TextChannel):
-            try:
-                audit_embed = attestation_audit_embed(
-                    action_title="🎉 АТТЕСТАЦИЯ УСПЕШНО СДАНА",
-                    candidate=self.candidate,
-                    curator=self.invoker,
-                    target_role_name=target_role_name,
-                    voice_channel=guild.get_channel(voice_id),
-                    scheduled_dt=None,
-                    status_text="PASSED (Сдана)",
-                    color=COLOR_SUCCESS,
-                    details=f"MC Ник: `{final_nick}`\nLP Группа: `{new_lp_group}`\nОтзыв: {comment or 'Без замечаний'}",
-                )
-                await audit_ch.send(embed=audit_embed)
-            except Exception as e:
-                logger.error(f"Failed to post pass audit: {e}")
+        try:
+            audit_embed = attestation_audit_embed(
+                action_title="🎉 АТТЕСТАЦИЯ УСПЕШНО СДАНА",
+                candidate=self.candidate,
+                curator=self.invoker,
+                target_role_name=target_role_name,
+                voice_channel=guild.get_channel(voice_id),
+                scheduled_dt=None,
+                status_text="PASSED (Сдана)",
+                color=COLOR_SUCCESS,
+                details=f"MC Ник: `{final_nick}`\nLP Группа: `{new_lp_group}`\nОтзыв: {comment or 'Без замечаний'}",
+            )
+            await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+        except Exception as e:
+            logger.error(f"Failed to post pass audit: {e}")
 
         success_embed = _create_design_embed(
             title="🎉 АТТЕСТАЦИЯ УСПЕШНО ПРИНЯТА",
@@ -840,27 +852,25 @@ class AttestationFailModal(discord.ui.Modal, title="❌ Фиксация про�
             pass
 
         # 5. Curators Audit Log
-        audit_ch = guild.get_channel(CURATORS_AUDIT_CHANNEL_ID)
-        if audit_ch and isinstance(audit_ch, discord.TextChannel):
-            try:
-                details_text = f"Неудачных попыток подряд: {fails_cnt}/{ATTESTATION_MAX_FAILS}\nПричина: {reason}"
-                if is_blacklisted:
-                    details_text += f"\n🚨 **КАНДИДАТ В ЧС НА 1 МЕСЯЦ** (до {bl_str})"
+        try:
+            details_text = f"Неудачных попыток подряд: {fails_cnt}/{ATTESTATION_MAX_FAILS}\nПричина: {reason}"
+            if is_blacklisted:
+                details_text += f"\n🚨 **КАНДИДАТ В ЧС НА 1 МЕСЯЦ** (до {bl_str})"
 
-                audit_embed = attestation_audit_embed(
-                    action_title="❌ АТТЕСТАЦИЯ ПРОВАЛЕНА",
-                    candidate=self.candidate,
-                    curator=self.invoker,
-                    target_role_name=target_role_name,
-                    voice_channel=guild.get_channel(voice_id),
-                    scheduled_dt=None,
-                    status_text="FAILED (Провалена)",
-                    color=COLOR_DANGER,
-                    details=details_text,
-                )
-                await audit_ch.send(embed=audit_embed)
-            except Exception as e:
-                logger.error(f"Failed to post fail audit: {e}")
+            audit_embed = attestation_audit_embed(
+                action_title="❌ АТТЕСТАЦИЯ ПРОВАЛЕНА",
+                candidate=self.candidate,
+                curator=self.invoker,
+                target_role_name=target_role_name,
+                voice_channel=guild.get_channel(voice_id),
+                scheduled_dt=None,
+                status_text="FAILED (Провалена)",
+                color=COLOR_DANGER,
+                details=details_text,
+            )
+            await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+        except Exception as e:
+            logger.error(f"Failed to post fail audit: {e}")
 
         res_desc = (
             f"Аттестация для {self.candidate.mention} помечена как **проваленная**.\n\n"
@@ -957,23 +967,21 @@ class AttestationSkipModal(discord.ui.Modal, title="⚠️ Фиксация пр
             pass
 
         # 5. Audit Log
-        audit_ch = guild.get_channel(CURATORS_AUDIT_CHANNEL_ID)
-        if audit_ch and isinstance(audit_ch, discord.TextChannel):
-            try:
-                audit_embed = attestation_audit_embed(
-                    action_title="⚠️ АТТЕСТАЦИЯ ПРОПУЩЕНА (НЕЯВКА)",
-                    candidate=self.candidate,
-                    curator=self.invoker,
-                    target_role_name=target_role_name,
-                    voice_channel=guild.get_channel(voice_id),
-                    scheduled_dt=None,
-                    status_text="SKIPPED (Пропущена)",
-                    color=COLOR_WARNING,
-                    details=f"Неудачных попыток подряд: {fails_cnt}/{ATTESTATION_MAX_FAILS}\nПричина: {reason}",
-                )
-                await audit_ch.send(embed=audit_embed)
-            except Exception as e:
-                logger.error(f"Failed to post skip audit: {e}")
+        try:
+            audit_embed = attestation_audit_embed(
+                action_title="⚠️ АТТЕСТАЦИЯ ПРОПУЩЕНА (НЕЯВКА)",
+                candidate=self.candidate,
+                curator=self.invoker,
+                target_role_name=target_role_name,
+                voice_channel=guild.get_channel(voice_id),
+                scheduled_dt=None,
+                status_text="SKIPPED (Пропущена)",
+                color=COLOR_WARNING,
+                details=f"Неудачных попыток подряд: {fails_cnt}/{ATTESTATION_MAX_FAILS}\nПричина: {reason}",
+            )
+            await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+        except Exception as e:
+            logger.error(f"Failed to post skip audit: {e}")
 
         res_desc = (
             f"Зафиксирована неявка {self.candidate.mention} на аттестацию.\n\n"
@@ -1103,21 +1111,19 @@ class AttestationUnblockView(discord.ui.View):
         await db.unblock_candidate(interaction.guild.id, self.candidate.id, interaction.user.id)
 
         # Audit Log
-        audit_ch = interaction.guild.get_channel(CURATORS_AUDIT_CHANNEL_ID)
-        if audit_ch and isinstance(audit_ch, discord.TextChannel):
-            try:
-                audit_embed = _create_design_embed(
-                    title="🔓 ДОСРОЧНОЕ СНЯТИЕ БЛОКИРОВКИ АТТЕСТАЦИЙ",
-                    description=(
-                        f"👑 **Администратор:** {interaction.user.mention} (`{interaction.user.name}`)\n"
-                        f"👤 **Кандидат:** {self.candidate.mention} (`{self.candidate.name}` | ID: `{self.candidate.id}`)\n\n"
-                        f"Счётчик неудач сброшен в `0`. Кандидат вновь допущен к аттестациям."
-                    ),
-                    color=COLOR_SUCCESS,
-                )
-                await audit_ch.send(embed=audit_embed)
-            except Exception:
-                pass
+        try:
+            audit_embed = _create_design_embed(
+                title="🔓 ДОСРОЧНОЕ СНЯТИЕ БЛОКИРОВКИ АТТЕСТАЦИЙ",
+                description=(
+                    f"👑 **Администратор:** {interaction.user.mention} (`{interaction.user.name}`)\n"
+                    f"👤 **Кандидат:** {self.candidate.mention} (`{self.candidate.name}` | ID: `{self.candidate.id}`)\n\n"
+                    f"Счётчик неудач сброшен в `0`. Кандидат вновь допущен к аттестациям."
+                ),
+                color=COLOR_SUCCESS,
+            )
+            await self.bot.send_channel_log(interaction.guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+        except Exception:
+            pass
 
         confirm_embed = _create_design_embed(
             title="🔓 БЛОКИРОВКА УСПЕШНО СНЯТА",
@@ -1274,21 +1280,19 @@ class AttestationCog(commands.Cog, name="Attestation"):
         await db.unblock_candidate(interaction.guild.id, user.id, interaction.user.id)
 
         # Audit Log
-        audit_ch = interaction.guild.get_channel(CURATORS_AUDIT_CHANNEL_ID)
-        if audit_ch and isinstance(audit_ch, discord.TextChannel):
-            try:
-                audit_embed = _create_design_embed(
-                    title="🔓 ДОСРОЧНОЕ СНЯТИЕ БЛОКИРОВКИ АТТЕСТАЦИЙ",
-                    description=(
-                        f"👑 **Администратор:** {interaction.user.mention} (`{interaction.user.name}`)\n"
-                        f"👤 **Кандидат:** {user.mention} (`{user.name}` | ID: `{user.id}`)\n\n"
-                        f"Счётчик неудач сброшен в `0`. Кандидат вновь допущен к аттестациям."
-                    ),
-                    color=COLOR_SUCCESS,
-                )
-                await audit_ch.send(embed=audit_embed)
-            except Exception:
-                pass
+        try:
+            audit_embed = _create_design_embed(
+                title="🔓 ДОСРОЧНОЕ СНЯТИЕ БЛОКИРОВКИ АТТЕСТАЦИЙ",
+                description=(
+                    f"👑 **Администратор:** {interaction.user.mention} (`{interaction.user.name}`)\n"
+                    f"👤 **Кандидат:** {user.mention} (`{user.name}` | ID: `{user.id}`)\n\n"
+                    f"Счётчик неудач сброшен в `0`. Кандидат вновь допущен к аттестациям."
+                ),
+                color=COLOR_SUCCESS,
+            )
+            await self.bot.send_channel_log(interaction.guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+        except Exception:
+            pass
 
         embed = _create_design_embed(
             title="🔓 БЛОКИРОВКА УСПЕШНО СНЯТА",

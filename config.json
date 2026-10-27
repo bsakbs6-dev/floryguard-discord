@@ -47,10 +47,10 @@
     "max_schedule_days_forward": 14
   },
   "moderation_channels": {
-    "curators_audit": 1391723887846490225,
+    "curators_audit": 1391723887846490224,
     "mutes_log": 1391723887066222594,
     "bans_log": 1391723887066222595,
-    "warns_log": 1391723887066222592,
+    "warns_log": 1391723887846490224,
     "moderation_cmd": 1564362994216083456
   },
   "authorized_guilds": {

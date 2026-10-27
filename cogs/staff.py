@@ -1559,15 +1559,32 @@ class StaffCog(commands.Cog, name="Staff"):
             return False
         return True
 
+    @staticmethod
+    async def _delayed_delete_message(message: discord.Message, delay: int = 15):
+        """Silently deletes a bridge command packet after `delay` seconds if not already deleted by server."""
+        try:
+            await asyncio.sleep(delay)
+            await message.delete()
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+
     async def _dispatch_mc_command(self, guild: discord.Guild, command: str) -> bool:
         """Sends an execution packet (__FLORY_EXEC__) to Minecraft through the bridge log channel."""
         guild_cfg = AUTHORIZED_GUILDS.get(guild.id, {})
         log_channel_id = guild_cfg.get("log_channel_id", 1391723887846490224)
         channel = guild.get_channel(log_channel_id)
+        if not channel:
+            try:
+                channel = await self.bot.fetch_channel(log_channel_id)
+            except Exception:
+                channel = None
+
         if channel and isinstance(channel, discord.TextChannel):
             try:
-                await channel.send(f"__FLORY_EXEC__ {command}")
+                msg = await channel.send(f"__FLORY_EXEC__ {command}")
                 logger.info(f"Dispatched MC command to bridge: {command}")
+                # Auto-delete packet if Minecraft bridge hasn't deleted it after 15 seconds
+                asyncio.create_task(self._delayed_delete_message(msg, delay=15))
                 return True
             except Exception as e:
                 logger.error(f"Failed to dispatch MC command '{command}': {e}")
@@ -1585,6 +1602,12 @@ class StaffCog(commands.Cog, name="Staff"):
         guild_cfg = AUTHORIZED_GUILDS.get(guild.id, {})
         log_channel_id = guild_cfg.get("log_channel_id", 1391723887846490224)
         channel = guild.get_channel(log_channel_id)
+        if not channel:
+            try:
+                channel = await self.bot.fetch_channel(log_channel_id)
+            except Exception:
+                channel = None
+
         if channel and isinstance(channel, discord.TextChannel):
             try:
                 packet = {
@@ -1595,8 +1618,10 @@ class StaffCog(commands.Cog, name="Staff"):
                     "target_nick": target_nick,
                     "reason": reason,
                 }
-                await channel.send(f"__FLORY_SYNC__ {json.dumps(packet, ensure_ascii=False)}")
+                msg = await channel.send(f"__FLORY_SYNC__ {json.dumps(packet, ensure_ascii=False)}")
                 logger.info(f"Dispatched ROLLBACK packet to bridge: {packet}")
+                # Auto-delete rollback packet after 20 seconds
+                asyncio.create_task(self._delayed_delete_message(msg, delay=20))
                 return True
             except Exception as e:
                 logger.error(f"Failed to dispatch ROLLBACK packet: {e}")

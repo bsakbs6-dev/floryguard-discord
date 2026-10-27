@@ -103,10 +103,10 @@ STAFF_ROLE_IDS = {role_id for role_id, _ in STAFF_HIERARCHY} | {STAFF_ACCESS_ROL
 
 # Moderation channels
 _MOD_CHANNELS = CONFIG.get("moderation_channels", {})
-CURATORS_AUDIT_CHANNEL_ID = int(_MOD_CHANNELS.get("curators_audit", 1391723887846490225))
+CURATORS_AUDIT_CHANNEL_ID = int(_MOD_CHANNELS.get("curators_audit", 1391723887846490224))
 MUTES_LOG_CHANNEL_ID = int(_MOD_CHANNELS.get("mutes_log", 1391723887066222594))
 BANS_LOG_CHANNEL_ID = int(_MOD_CHANNELS.get("bans_log", 1391723887066222595))
-WARNS_LOG_CHANNEL_ID = int(_MOD_CHANNELS.get("warns_log", 1391723887066222592))
+WARNS_LOG_CHANNEL_ID = int(_MOD_CHANNELS.get("warns_log", 1391723887846490224))
 MODERATION_CMD_CHANNEL_ID = int(_MOD_CHANNELS.get("moderation_cmd", 1564362994216083456))
 
 # Privileged roles without channel restriction for moderation commands
