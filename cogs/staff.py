@@ -1974,7 +1974,38 @@ class StaffCog(commands.Cog, name="Staff"):
             target_idx = 7 if mc_role_id == TRAINEE_ROLE_ID else 5
 
         is_staff = (not target.bot) and (rank_name != "Участник") and (target_idx < 100)
+        is_trainee = is_staff and ((rank_name == "Стажер") or (target_idx == 7) or (max_warns == TRAINEE_MAX_WARNS))
         active_warns = await db.get_active_warn_count(interaction.guild.id, target.id) if is_staff else 0
+
+        # Calculate days in staff (for staff) or days on server (for regular players)
+        now_utc = datetime.now(timezone.utc)
+        joined_at = target.joined_at if hasattr(target, "joined_at") and target.joined_at else None
+        created_at = target.created_at if hasattr(target, "created_at") and target.created_at else now_utc
+
+        if is_staff:
+            staff_since = None
+            admin_rec = await db.get_admin(interaction.guild.id, target.id)
+            if admin_rec and admin_rec.get("added_at"):
+                try:
+                    staff_since = datetime.fromisoformat(admin_rec["added_at"])
+                except Exception:
+                    pass
+            if not staff_since and stats and stats.get("updated_at"):
+                try:
+                    staff_since = datetime.fromisoformat(stats["updated_at"])
+                except Exception:
+                    pass
+            if not staff_since:
+                staff_since = joined_at or created_at
+
+            if staff_since.tzinfo is None:
+                staff_since = staff_since.replace(tzinfo=timezone.utc)
+            days_count = max(1, (now_utc - staff_since).days)
+        else:
+            base_date = joined_at or created_at
+            if base_date.tzinfo is None:
+                base_date = base_date.replace(tzinfo=timezone.utc)
+            days_count = max(1, (now_utc - base_date).days)
 
         display_nick = (
             (stats.get("minecraft_nick") if stats and stats.get("minecraft_nick") else None)
@@ -2109,11 +2140,12 @@ class StaffCog(commands.Cog, name="Staff"):
                 max_warns=max_warns,
                 online_seconds=online_seconds,
                 norm_seconds=norm_seconds,
-                warns_issued=warns_issued,
+                days_count=days_count,
                 bans_issued=bans_issued,
                 reports_accepted=reports_accepted,
                 mutes_issued=mutes_issued,
                 is_staff=is_staff,
+                is_trainee=is_trainee,
             )
             file = discord.File(fp=image_buffer, filename=f"staff_profile_{target.id}.png")
             kwargs = {"file": file}

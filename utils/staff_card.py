@@ -89,6 +89,20 @@ def _draw_icon(draw: ImageDraw.ImageDraw, icon_type: str, x: int, y: int, color:
         draw.line([(x + 14, y + 8), (x + 14, y + 17)], fill=(26, 22, 18, 255), width=3)
         draw.ellipse((x + 12, y + 20, x + 16, y + 24), fill=(26, 22, 18, 255))
 
+    elif icon_type == "calendar":
+        # Clean vector calendar icon
+        draw.line([(x + 7, y + 2), (x + 7, y + 7)], fill=color, width=3)
+        draw.line([(x + 21, y + 2), (x + 21, y + 7)], fill=color, width=3)
+        draw.rounded_rectangle((x + 2, y + 5, x + 26, y + 29), radius=4, fill=(28, 24, 20, 255), outline=color, width=2)
+        # Top accent bar
+        draw.rectangle((x + 3, y + 5, x + 25, y + 12), fill=color)
+        # Grid dots
+        for row in range(2):
+            for col in range(3):
+                px = x + 6 + col * 6
+                py = y + 16 + row * 5
+                draw.rectangle((px, py, px + 2, py + 2), fill=color)
+
     elif icon_type == "gavel":
         draw.line([(x + 6, y + 24), (x + 22, y + 8)], fill=color, width=4)
         head_pts = [(x + 14, y + 2), (x + 26, y + 14), (x + 22, y + 18), (x + 10, y + 6)]
@@ -139,11 +153,13 @@ def generate_staff_profile_card(
     max_warns: int,
     online_seconds: int = 0,
     norm_seconds: int = 14400,
-    warns_issued: Optional[int] = 0,
+    days_count: int = 1,
     bans_issued: Optional[int] = 0,
     reports_accepted: Optional[int] = 0,
     mutes_issued: Optional[int] = 0,
     is_staff: bool = True,
+    is_trainee: bool = False,
+    warns_issued: Optional[int] = None,
 ) -> io.BytesIO:
     """
     Generates a high-resolution FloryMine yellow-orange themed Staff Profile Card PNG.
@@ -250,14 +266,23 @@ def generate_staff_profile_card(
     # CARDS 3..6: 4 DARK STAT CARDS (2x2 Grid)
     # =========================================================================
     font_stat_unavail = _load_font(28, bold=True)
+
+    # Permissions check: Trainees do NOT have access to bans and reports!
+    can_issue_bans = is_staff and (not is_trainee)
+    can_handle_reports = is_staff and (not is_trainee)
+    can_issue_mutes = is_staff
+
+    first_card_label = "Дней в стаффе" if is_staff else "На сервере"
+    first_card_val = f"{max(1, days_count)} дн."
+
     stat_items = [
-        (col1_x, row2_y, "shield", "Выдано варнов", warns_issued if is_staff else None),
-        (col2_x, row2_y, "gavel", "Выдано банов", bans_issued if is_staff else None),
-        (col1_x, row3_y, "report", "Принятые репорты", reports_accepted if is_staff else None),
-        (col2_x, row3_y, "mute", "Выдано мутов", mutes_issued if is_staff else None),
+        (col1_x, row2_y, "calendar", first_card_label, first_card_val, True),
+        (col2_x, row2_y, "gavel", "Выдано банов", str(int(bans_issued or 0)) if can_issue_bans else None, can_issue_bans),
+        (col1_x, row3_y, "report", "Принято репортов", str(int(reports_accepted or 0)) if can_handle_reports else None, can_handle_reports),
+        (col2_x, row3_y, "mute", "Выдано мутов", str(int(mutes_issued or 0)) if can_issue_mutes else None, can_issue_mutes),
     ]
 
-    for sx, sy, icon_name, label_text, raw_val in stat_items:
+    for sx, sy, icon_name, label_text, display_val, available in stat_items:
         scard = Image.new("RGBA", (card_w, stat_card_h), (0, 0, 0, 0))
         sdraw = ImageDraw.Draw(scard)
         sdraw.rounded_rectangle(
@@ -268,15 +293,14 @@ def generate_staff_profile_card(
             width=1,
         )
 
-        available = is_staff and (raw_val is not None)
         _draw_watermark_status(scard, available)
 
         icon_col = (255, 180, 40, 220)
         _draw_icon(sdraw, icon_name, 26, 26, icon_col)
 
         sdraw.text((26, 98), label_text, font=font_stat_label, fill=(165, 156, 145, 255))
-        if available:
-            sdraw.text((26, 130), str(int(raw_val or 0)), font=font_stat_val, fill=(255, 255, 255, 255))
+        if available and display_val is not None:
+            sdraw.text((26, 130), str(display_val), font=font_stat_val, fill=(255, 255, 255, 255))
         else:
             sdraw.text((26, 134), "Недоступно", font=font_stat_unavail, fill=(235, 230, 225, 245))
 
