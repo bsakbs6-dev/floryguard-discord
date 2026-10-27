@@ -36,6 +36,13 @@
       { "role_id": 1454703157677395969, "name": "Стажер", "daily_norm_hours": 2.0 }
     ]
   },
+  "moderation_channels": {
+    "curators_audit": 1391723887846490225,
+    "mutes_log": 1391723887066222594,
+    "bans_log": 1391723887066222595,
+    "warns_log": 1391723887066222592,
+    "moderation_cmd": 1564362994216083456
+  },
   "authorized_guilds": {
     "1391723885862588486": {
       "name": "⚡ FloryMine ⚡",

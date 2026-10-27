@@ -142,6 +142,24 @@ class Database:
                 );
             """)
 
+            # Table for Punishment Logs (FloryModerators bans, mutes, warns with anti-abuse verification)
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS punishment_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    moderator_id INTEGER DEFAULT 0,
+                    moderator_nick TEXT NOT NULL,
+                    target_nick TEXT NOT NULL,
+                    target_ip TEXT DEFAULT '',
+                    punishment_type TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    duration_seconds INTEGER DEFAULT 0,
+                    is_valid_for_stats INTEGER DEFAULT 1,
+                    created_at TIMESTAMP NOT NULL,
+                    audit_requested INTEGER DEFAULT 0
+                );
+            """)
+
             # Table for Guild Settings override
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS guild_settings (
@@ -524,6 +542,140 @@ class Database:
             async with db.execute(
                 "SELECT id, guild_id, created_at, created_by FROM snapshots WHERE guild_id = ? ORDER BY created_at DESC LIMIT 10",
                 (guild_id,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    # --- PUNISHMENT LOGS & STAFF STATS ADJUSTMENT ---
+    async def log_punishment(
+        self,
+        guild_id: int,
+        moderator_id: int,
+        moderator_nick: str,
+        target_nick: str,
+        target_ip: str,
+        punishment_type: str,
+        reason: str,
+        duration_seconds: int,
+        is_valid_for_stats: int = 1,
+        audit_requested: int = 0,
+    ) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO punishment_logs
+                (guild_id, moderator_id, moderator_nick, target_nick, target_ip, punishment_type, reason, duration_seconds, is_valid_for_stats, created_at, audit_requested)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    guild_id,
+                    moderator_id,
+                    moderator_nick,
+                    target_nick,
+                    target_ip or "",
+                    punishment_type.upper(),
+                    reason,
+                    duration_seconds,
+                    is_valid_for_stats,
+                    now,
+                    audit_requested,
+                ),
+            )
+            punishment_id = cursor.lastrowid
+            await db.commit()
+            return punishment_id
+
+    async def adjust_staff_stats(
+        self,
+        guild_id: int,
+        user_id: Optional[int] = None,
+        mc_nick: Optional[str] = None,
+        bans_delta: int = 0,
+        mutes_delta: int = 0,
+        warns_delta: int = 0,
+        reports_delta: int = 0,
+    ) -> bool:
+        """Safely adjust staff stats (positive or negative delta), never dropping below 0."""
+        async with aiosqlite.connect(self.db_path) as db:
+            now_str = datetime.now(timezone.utc).isoformat()
+            if user_id and user_id > 0:
+                await db.execute(
+                    """
+                    INSERT OR IGNORE INTO staff_stats (guild_id, user_id, bans_issued, mutes_issued, warns_issued, reports_accepted, updated_at)
+                    VALUES (?, ?, 0, 0, 0, 0, ?)
+                    """,
+                    (guild_id, user_id, now_str),
+                )
+                await db.execute(
+                    """
+                    UPDATE staff_stats
+                    SET bans_issued = MAX(0, COALESCE(bans_issued, 0) + ?),
+                        mutes_issued = MAX(0, COALESCE(mutes_issued, 0) + ?),
+                        warns_issued = MAX(0, COALESCE(warns_issued, 0) + ?),
+                        reports_accepted = MAX(0, COALESCE(reports_accepted, 0) + ?),
+                        updated_at = ?
+                    WHERE guild_id = ? AND user_id = ?
+                    """,
+                    (bans_delta, mutes_delta, warns_delta, reports_delta, now_str, guild_id, user_id),
+                )
+            if mc_nick:
+                lower = mc_nick.strip().lower()
+                await db.execute(
+                    """
+                    INSERT OR IGNORE INTO staff_stats_by_nick (guild_id, lower_nick, minecraft_nick, user_id, bans_issued, mutes_issued, warns_issued, reports_accepted, updated_at)
+                    VALUES (?, ?, ?, ?, 0, 0, 0, 0, ?)
+                    """,
+                    (guild_id, lower, mc_nick.strip(), user_id or 0, now_str),
+                )
+                await db.execute(
+                    """
+                    UPDATE staff_stats_by_nick
+                    SET bans_issued = MAX(0, COALESCE(bans_issued, 0) + ?),
+                        mutes_issued = MAX(0, COALESCE(mutes_issued, 0) + ?),
+                        warns_issued = MAX(0, COALESCE(warns_issued, 0) + ?),
+                        reports_accepted = MAX(0, COALESCE(reports_accepted, 0) + ?),
+                        updated_at = ?
+                    WHERE guild_id = ? AND lower_nick = ?
+                    """,
+                    (bans_delta, mutes_delta, warns_delta, reports_delta, now_str, guild_id, lower),
+                )
+            await db.commit()
+            return True
+
+    async def reset_weekly_staff_online(self, guild_id: int) -> int:
+        """Resets online_seconds to 0 for all staff members on weekly digest reset."""
+        async with aiosqlite.connect(self.db_path) as db:
+            c1 = await db.execute("UPDATE staff_stats SET online_seconds = 0 WHERE guild_id = ?", (guild_id,))
+            await db.execute("UPDATE staff_stats_by_nick SET online_seconds = 0 WHERE guild_id = ?", (guild_id,))
+            await db.commit()
+            return c1.rowcount
+
+    async def get_all_staff_stats(self, guild_id: int) -> List[Dict[str, Any]]:
+        """Fetch all staff stats for a guild, sorted by online time and actions."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT * FROM staff_stats
+                WHERE guild_id = ?
+                ORDER BY online_seconds DESC, (bans_issued + mutes_issued + reports_accepted) DESC
+                """,
+                (guild_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def get_recent_punishments_by_moderator(self, guild_id: int, moderator_nick: str, limit: int = 10) -> List[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT * FROM punishment_logs
+                WHERE guild_id = ? AND LOWER(moderator_nick) = LOWER(?)
+                ORDER BY id DESC LIMIT ?
+                """,
+                (guild_id, moderator_nick.strip(), limit),
             ) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]

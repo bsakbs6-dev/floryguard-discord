@@ -4,6 +4,7 @@ from discord.ext import commands
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Union
 
+from config import TRUSTED_BOT_IDS
 from core.permissions import is_module_enabled, is_whitelisted, has_permission
 from utils.logger import logger
 from utils.embeds import anti_nuke_alert_embed
@@ -51,8 +52,8 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
                     continue
 
                 if entry.user:
-                    # Ignore bot's own automated actions
-                    if entry.user.id == self.bot.user.id:
+                    # Ignore bot's own automated actions and trusted project bots (FloryAuthentication / FloryModerators)
+                    if entry.user.id == self.bot.user.id or entry.user.id in TRUSTED_BOT_IDS:
                         return None
 
                     member = guild.get_member(entry.user.id)
@@ -635,7 +636,7 @@ class AntiNukeCog(commands.Cog, name="AntiNuke"):
             return
 
         executor = await self._get_audit_executor(guild, discord.AuditLogAction.member_role_update, target_id=after.id)
-        if not executor or executor.id == self.bot.user.id:
+        if not executor or executor.id == self.bot.user.id or executor.id in TRUSTED_BOT_IDS:
             return
 
         if await has_permission(guild.id, executor.id, "roles_assign"):

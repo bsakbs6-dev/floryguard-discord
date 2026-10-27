@@ -4,7 +4,7 @@ from discord.ext import commands
 from discord import app_commands
 from typing import Optional, Literal, Tuple
 
-from config import UNAUTHORIZED_MESSAGE, STAFF_ROLE_IDS
+from config import UNAUTHORIZED_MESSAGE, STAFF_ROLE_IDS, WARNS_LOG_CHANNEL_ID
 from core.permissions import (
     is_authorized_guild,
     is_senior_admin,
@@ -14,6 +14,7 @@ from core.permissions import (
     get_admin_info,
     has_warn_access,
     get_member_staff_rank,
+    check_moderation_channel,
 )
 from database.db import db
 from utils.logger import logger
@@ -170,6 +171,11 @@ class ModerationCog(commands.Cog, name="Moderation"):
         if not await self._check_guild_auth(interaction):
             return
 
+        can_run, err_msg = check_moderation_channel(interaction)
+        if not can_run:
+            await interaction.response.send_message(err_msg, ephemeral=True)
+            return
+
         if not isinstance(interaction.user, discord.Member) or not has_warn_access(interaction.user):
             await interaction.response.send_message(
                 "❌ У вас нет доступа к выдаче выговоров (требуется роль `1454703598834421831`).",
@@ -279,6 +285,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
         embed = create_security_embed(title="⚠️ ВЫДАН ВЫГОВОР СТАФФА", description=desc, color=color)
         await interaction.followup.send(embed=embed, ephemeral=True)
         await self.bot.send_security_log(interaction.guild, embed)
+        await self.bot.send_channel_log(interaction.guild, WARNS_LOG_CHANNEL_ID, embed)
 
     @app_commands.command(name="unwarn", description="Снять выговор по ID или очистить все выговоры сотрудника")
     @app_commands.describe(
@@ -292,6 +299,11 @@ class ModerationCog(commands.Cog, name="Moderation"):
         warn_id: Optional[int] = None,
     ):
         if not await self._check_guild_auth(interaction):
+            return
+
+        can_run, err_msg = check_moderation_channel(interaction)
+        if not can_run:
+            await interaction.response.send_message(err_msg, ephemeral=True)
             return
 
         if not isinstance(interaction.user, discord.Member) or not has_warn_access(interaction.user):
@@ -311,6 +323,7 @@ class ModerationCog(commands.Cog, name="Moderation"):
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
                 await self.bot.send_security_log(interaction.guild, embed)
+                await self.bot.send_channel_log(interaction.guild, WARNS_LOG_CHANNEL_ID, embed)
             else:
                 await interaction.response.send_message(
                     f"❌ Выговор с ID `{warn_id}` не найден или уже истек.",
@@ -325,11 +338,17 @@ class ModerationCog(commands.Cog, name="Moderation"):
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             await self.bot.send_security_log(interaction.guild, embed)
+            await self.bot.send_channel_log(interaction.guild, WARNS_LOG_CHANNEL_ID, embed)
 
     @app_commands.command(name="warns", description="Показать список активных выговоров сотрудника")
     @app_commands.describe(user="Сотрудник для проверки")
     async def warns_list_command(self, interaction: discord.Interaction, user: discord.Member):
         if not await self._check_guild_auth(interaction):
+            return
+
+        can_run, err_msg = check_moderation_channel(interaction)
+        if not can_run:
+            await interaction.response.send_message(err_msg, ephemeral=True)
             return
 
         if not isinstance(interaction.user, discord.Member) or not has_warn_access(interaction.user):

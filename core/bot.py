@@ -136,6 +136,17 @@ class FloryGuardBot(commands.Bot):
         except Exception as e:
             logger.error(f"Failed to send security log in {guild.name}: {e}")
 
+    async def send_channel_log(self, guild: discord.Guild, channel_id: int, embed: discord.Embed) -> bool:
+        """Send embed to a specific designated channel by ID."""
+        try:
+            ch = guild.get_channel(channel_id)
+            if ch and isinstance(ch, discord.TextChannel) and ch.permissions_for(guild.me).send_messages:
+                await ch.send(embed=embed)
+                return True
+        except Exception as e:
+            logger.error(f"Failed to send log to channel {channel_id} in {guild.name}: {e}")
+        return False
+
     async def quarantine_member(self, guild: discord.Guild, member: discord.Member, reason: str) -> bool:
         """
         Strips all removable roles from the member and assigns the Quarantine role (if available).

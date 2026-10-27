@@ -15,6 +15,8 @@ from config import (
     STAFF_HIERARCHY,
     STAFF_ROLE_DAILY_NORM_HOURS,
     STAFF_ROLE_IDS,
+    MODERATION_CMD_CHANNEL_ID,
+    PRIVILEGED_ROLES_UNRESTRICTED_CHANNELS,
 )
 from database.db import db
 
@@ -97,6 +99,37 @@ def has_warn_access(member: discord.Member) -> bool:
         return True
     member_role_ids = {r.id for r in member.roles}
     return WARN_ACCESS_ROLE_ID in member_role_ids
+
+
+def check_moderation_channel(interaction: discord.Interaction) -> Tuple[bool, Optional[str]]:
+    """
+    Enforces the moderation command execution channel policy:
+    1. If the user has any privileged role (1550434344588288030, 1548646933101420564,
+       1555624705342308403, 1391723885900333214) or is Server Owner / Bot Owner:
+       -> Allowed in ANY channel.
+    2. If the user has base curator role 1454703598834421831 (WARN_ACCESS_ROLE_ID):
+       -> Allowed ONLY in channel 1564362994216083456 (MODERATION_CMD_CHANNEL_ID).
+    3. Otherwise:
+       -> Denied access.
+    """
+    member = interaction.user
+    if not isinstance(member, discord.Member):
+        return False, "❌ Команда доступна только участникам сервера."
+
+    guild_id = interaction.guild_id or (interaction.guild.id if interaction.guild else None)
+    if is_bot_owner(member.id, guild_id) or is_senior_admin(member.id, guild_id):
+        return True, None
+
+    member_role_ids = {r.id for r in member.roles}
+    if member_role_ids & PRIVILEGED_ROLES_UNRESTRICTED_CHANNELS:
+        return True, None
+
+    if WARN_ACCESS_ROLE_ID in member_role_ids:
+        if interaction.channel_id == MODERATION_CMD_CHANNEL_ID:
+            return True, None
+        return False, f"❌ Команды модерации для вашей должности разрешены только в канале <#{MODERATION_CMD_CHANNEL_ID}>."
+
+    return False, "❌ У вас нет прав для выполнения команд модерации."
 
 
 def get_member_staff_rank(member: discord.Member) -> Tuple[str, int, bool, int]:

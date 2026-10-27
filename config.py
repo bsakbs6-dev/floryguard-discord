@@ -100,3 +100,32 @@ STAFF_ROLE_DAILY_NORM_HOURS = {
 }
 
 STAFF_ROLE_IDS = {role_id for role_id, _ in STAFF_HIERARCHY} | {STAFF_ACCESS_ROLE_ID}
+
+# Moderation channels
+_MOD_CHANNELS = CONFIG.get("moderation_channels", {})
+CURATORS_AUDIT_CHANNEL_ID = int(_MOD_CHANNELS.get("curators_audit", 1391723887846490225))
+MUTES_LOG_CHANNEL_ID = int(_MOD_CHANNELS.get("mutes_log", 1391723887066222594))
+BANS_LOG_CHANNEL_ID = int(_MOD_CHANNELS.get("bans_log", 1391723887066222595))
+WARNS_LOG_CHANNEL_ID = int(_MOD_CHANNELS.get("warns_log", 1391723887066222592))
+MODERATION_CMD_CHANNEL_ID = int(_MOD_CHANNELS.get("moderation_cmd", 1564362994216083456))
+
+# Privileged roles without channel restriction for moderation commands
+PRIVILEGED_ROLES_UNRESTRICTED_CHANNELS = {
+    1550434344588288030,  # Разработчик
+    1548646933101420564,  # Администрация
+    1555624705342308403,  # Скрытая Админка
+    1391723885900333214,  # Высшая Администрация
+    1544022496934756482,  # Руководитель (FloryAuthentication)
+}
+
+# Trusted external bots (FloryAuthentication & FloryModerators) exempt from Anti-Nuke rollbacks
+TRUSTED_BOT_IDS = {
+    1548030526839988234,  # FloryAuthentication Discord Bot
+    1542840899598426192,  # FloryModerators Discord Bot
+}
+
+# Punishment validation thresholds
+MUTE_MIN_VALID_SECONDS = 15 * 60  # 15 minutes (900 seconds)
+BAN_MIN_VALID_SECONDS = 7 * 86400  # 7 days (604800 seconds)
+SPOT_CHECK_PROBABILITY = 0.08  # ~8% chance for random audit on valid bans
+
