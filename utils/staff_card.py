@@ -168,11 +168,27 @@ def generate_staff_profile_card(
     W, H = 1280, 720
     base = Image.new("RGBA", (W, H), (14, 10, 7, 255))
 
-    # 1. Ambient orange-gold radial glow on background
+    # 1. Custom Generated AI Background (Cyberpunk for Staff, Community for Players)
+    bg_custom_path = (FONTS_DIR.parent / "card_bg_cyber.png") if is_staff else (FONTS_DIR.parent / "card_bg_community.png")
+    if not bg_custom_path.exists() and not is_staff:
+        bg_custom_path = FONTS_DIR.parent / "card_bg_cyber.png"
+
+    if bg_custom_path.exists():
+        try:
+            with Image.open(bg_custom_path) as custom_bg:
+                bg_img = custom_bg.convert("RGBA").resize((W, H), Image.Resampling.LANCZOS)
+                # Darken slightly with translucent dark tint so UI text & cards remain exceptionally legible
+                dark_dim = Image.new("RGBA", (W, H), (12, 9, 6, 170 if is_staff else 190))
+                bg_img.alpha_composite(dark_dim)
+                base.alpha_composite(bg_img)
+        except Exception:
+            pass
+
+    # Ambient orange-gold radial glow overlay
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gdraw = ImageDraw.Draw(glow)
-    gdraw.ellipse((680, 60, 1340, 720), fill=(255, 145, 0, 58))
-    gdraw.ellipse((-120, -100, 520, 420), fill=(255, 175, 0, 38))
+    gdraw.ellipse((680, 60, 1340, 720), fill=(255, 145, 0, 48))
+    gdraw.ellipse((-120, -100, 520, 420), fill=(255, 175, 0, 32))
     glow = glow.filter(ImageFilter.GaussianBlur(radius=95))
     base.alpha_composite(glow)
 
