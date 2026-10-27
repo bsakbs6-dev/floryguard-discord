@@ -150,6 +150,10 @@ def get_member_staff_rank(member: discord.Member) -> Tuple[str, int, bool, int]:
         return "Владелец", DEFAULT_STAFF_MAX_WARNS, False, -2
     if is_senior_admin(member.id, member.guild.id):
         return "Высшая Администрация", DEFAULT_STAFF_MAX_WARNS, False, -1
+    if member_role_ids & PRIVILEGED_ROLES_UNRESTRICTED_CHANNELS:
+        return "Администрация", DEFAULT_STAFF_MAX_WARNS, False, 1
+    if WARN_ACCESS_ROLE_ID in member_role_ids:
+        return "Куратор", DEFAULT_STAFF_MAX_WARNS, False, 2
     if STAFF_ACCESS_ROLE_ID in member_role_ids:
         return "Стафф", DEFAULT_STAFF_MAX_WARNS, False, 99
 

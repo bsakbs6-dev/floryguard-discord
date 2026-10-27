@@ -666,19 +666,54 @@ class Database:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
 
-    async def get_recent_punishments_by_moderator(self, guild_id: int, moderator_nick: str, limit: int = 10) -> List[Dict[str, Any]]:
+    async def get_recent_punishments_by_moderator(
+        self,
+        guild_id: int,
+        moderator_nick: Optional[str] = None,
+        moderator_id: Optional[int] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            conditions = []
+            params: list[Any] = [guild_id]
+            if moderator_nick and moderator_nick.strip():
+                conditions.append("LOWER(moderator_nick) = LOWER(?)")
+                params.append(moderator_nick.strip())
+            if moderator_id and moderator_id > 0:
+                conditions.append("moderator_id = ?")
+                params.append(moderator_id)
+            if not conditions:
+                return []
+            clause = " OR ".join(conditions)
+            params.append(limit)
+            query = f"""
+                SELECT * FROM punishment_logs
+                WHERE guild_id = ? AND is_valid_for_stats = 1 AND ({clause})
+                ORDER BY id DESC LIMIT ?
+            """
+            async with db.execute(query, tuple(params)) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def get_punishment_by_id(self, punishment_id: int, guild_id: int) -> Optional[Dict[str, Any]]:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                """
-                SELECT * FROM punishment_logs
-                WHERE guild_id = ? AND LOWER(moderator_nick) = LOWER(?)
-                ORDER BY id DESC LIMIT ?
-                """,
-                (guild_id, moderator_nick.strip(), limit),
+                "SELECT * FROM punishment_logs WHERE id = ? AND guild_id = ?",
+                (punishment_id, guild_id),
             ) as cursor:
-                rows = await cursor.fetchall()
-                return [dict(r) for r in rows]
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def invalidate_punishment(self, punishment_id: int, guild_id: int) -> bool:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE punishment_logs SET is_valid_for_stats = 0 WHERE id = ? AND guild_id = ?",
+                (punishment_id, guild_id),
+            )
+            await db.commit()
+            return True
 
     # --- SECURITY EVENT LOGS ---
     async def log_security_event(self, guild_id: int, user_id: int, action_type: str, details: str):

@@ -121,47 +121,260 @@ def format_duration_seconds(seconds: int) -> str:
 
 
 # =========================================================================
-# MODALS FOR CURATOR CONTROLS IN /staff-profile
+# DESIGN-ENGINEER GRADE INTERACTIVE STAFF CONTROLS (LINEAR / APPLE SPEC)
 # =========================================================================
-class PromoteStaffModal(discord.ui.Modal, title="⬆️ Повышение сотрудника Стаффа"):
-    reason = discord.ui.TextInput(
-        label="Причина повышения",
-        placeholder="Например: Отличная работа, закрытие нормы онлайна",
-        min_length=5,
-        max_length=256,
-        required=True,
-    )
-    confirm = discord.ui.TextInput(
-        label="Подтверждение действия",
-        placeholder="Введите 'ПОДТВЕРЖДАЮ'",
-        min_length=12,
-        max_length=12,
-        required=True,
-    )
+COLOR_MUTED = 0x4F545C
+COLOR_DARK_SURFACE = 0x1E1F22
 
-    def __init__(self, bot: commands.Bot, cog, invoker: discord.Member, target: discord.Member, current_idx: int, mc_nick: str):
-        super().__init__()
+
+def get_invoker_allowed_promotion_ceiling_idx(invoker: discord.Member) -> int:
+    """Returns the minimum rank index (highest rank) the invoker is permitted to promote a user TO.
+    
+    STAFF_HIERARCHY ordering (index 0 is highest, index 7 is lowest):
+      0: Высшая Администрация
+      1: Администрация
+      2: Куратор
+      3: Гл. Модер | Зам. Куратора
+      4: Ст. Модер
+      5: Модер
+      6: Хелпер
+      7: Стажер
+    
+    A base Curator (role 1454703598834421831 or 1454703503292502155) can promote at MAXIMUM
+    to 'Гл. Модер | Зам. Куратора' (index 3).
+    Higher administrators (Developer, Admin, Hidden Admin, Supreme Admin, Server Owner) can promote
+    to higher positions up to their own rank level.
+    """
+    if is_bot_owner(invoker.id) or (invoker.guild and invoker.id == invoker.guild.owner_id):
+        return 0
+
+    privileged_roles = {
+        1550434344588288030,  # Разработчик
+        1548646933101420564,  # Администрация
+        1555624705342308403,  # Скрытая Админка
+        1391723885900333214,  # Высшая Администрация
+    }
+    user_roles = {r.id for r in invoker.roles}
+    if user_roles & privileged_roles:
+        _, _, _, invoker_idx = get_member_staff_rank(invoker)
+        return max(0, invoker_idx)
+
+    # Base Curator ceiling is strictly index 3 (Гл. Модератор | Зам. Куратора)
+    return 3
+
+
+def get_rank_emoji(role_id: int) -> str:
+    """Returns an aesthetic visual icon matching the rank role."""
+    mc_grp = ROLE_ID_TO_MC_GROUP.get(role_id, "default")
+    emojis = {
+        "ruk": "👑",
+        "admin": "⭐",
+        "developer": "💻",
+        "cur": "⚜️",
+        "gl.moder": "🛡️",
+        "st.moder": "⚔️",
+        "moder": "📜",
+        "helper": "🔰",
+        "intern": "🌱",
+    }
+    return emojis.get(mc_grp, "🔹")
+
+
+def create_design_embed(
+    title: str,
+    description: str,
+    color: int = COLOR_PRIMARY,
+    footer_text: str = "FloryGuard • Staff Management System",
+) -> discord.Embed:
+    """Creates a Design-Engineer grade embed with consistent visual hierarchy."""
+    embed = discord.Embed(
+        title=title,
+        description=description,
+        color=color,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_footer(text=footer_text, icon_url="https://cdn.discordapp.com/embed/avatars/0.png")
+    return embed
+
+
+# -------------------------------------------------------------------------
+# 1. PROMOTE FLOW (Dropdown Selection ➔ Reason Modal ➔ 2-Button Confirm)
+# -------------------------------------------------------------------------
+class PromoteRankSelect(discord.ui.Select):
+    def __init__(self, eligible_ranks: list[tuple[int, int, str]]):
+        options = []
+        for idx, r_id, r_name in eligible_ranks:
+            lp_grp = ROLE_ID_TO_MC_GROUP.get(r_id, "intern")
+            daily_h = STAFF_ROLE_DAILY_NORM_HOURS.get(r_id, DEFAULT_DAILY_NORM_HOURS)
+            options.append(
+                discord.SelectOption(
+                    label=r_name,
+                    value=str(idx),
+                    description=f"Норма: {daily_h} ч./день • LuckPerms: {lp_grp}",
+                    emoji=get_rank_emoji(r_id),
+                )
+            )
+        super().__init__(
+            placeholder="Выберите целевую должность для повышения...",
+            min_values=1,
+            max_values=1,
+            options=options,
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        new_idx = int(self.values[0])
+        modal = PromoteReasonModal(
+            bot=self.view.bot,
+            cog=self.view.cog,
+            invoker=self.view.invoker,
+            target=self.view.target,
+            current_idx=self.view.current_idx,
+            new_idx=new_idx,
+            mc_nick=self.view.mc_nick,
+        )
+        await interaction.response.send_modal(modal)
+
+
+class PromoteRankSelectView(discord.ui.View):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        current_idx: int,
+        mc_nick: str,
+        eligible_ranks: list[tuple[int, int, str]],
+    ):
+        super().__init__(timeout=180)
         self.bot = bot
         self.cog = cog
         self.invoker = invoker
         self.target = target
         self.current_idx = current_idx
         self.mc_nick = mc_nick
+        self.add_item(PromoteRankSelect(eligible_ranks))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.invoker.id and not is_senior_admin(interaction.user.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Действие доступно только инициатору команды.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Отмена", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cancel_embed = create_design_embed(
+            title="⚪ ДЕЙСТВИЕ ОТМЕНЕНО",
+            description="Повышение сотрудника отменено.",
+            color=COLOR_MUTED,
+        )
+        await interaction.response.edit_message(embed=cancel_embed, view=None)
+
+
+class PromoteReasonModal(discord.ui.Modal, title="⬆️ Причина повышения в должности"):
+    reason = discord.ui.TextInput(
+        label="Причина повышения сотрудника",
+        placeholder="Например: Отличная активность за неделю, выполнение нормы онлайна",
+        min_length=4,
+        max_length=256,
+        required=True,
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        current_idx: int,
+        new_idx: int,
+        mc_nick: str,
+    ):
+        super().__init__()
+        self.bot = bot
+        self.cog = cog
+        self.invoker = invoker
+        self.target = target
+        self.current_idx = current_idx
+        self.new_idx = new_idx
+        self.mc_nick = mc_nick
 
     async def on_submit(self, interaction: discord.Interaction):
-        if self.confirm.value.strip() != "ПОДТВЕРЖДАЮ":
-            await interaction.response.send_message("❌ Действие отменено: неверное подтверждение.", ephemeral=True)
-            return
-
-        if self.current_idx <= 0:
-            await interaction.response.send_message("❌ Сотрудник уже занимает наивысшую должность.", ephemeral=True)
-            return
-
-        new_idx = self.current_idx - 1
-        new_role_id, new_rank_name = STAFF_HIERARCHY[new_idx]
         old_role_id, old_rank_name = STAFF_HIERARCHY[self.current_idx]
+        new_role_id, new_rank_name = STAFF_HIERARCHY[self.new_idx]
+        old_lp_group = ROLE_ID_TO_MC_GROUP.get(old_role_id, "intern")
+        new_lp_group = ROLE_ID_TO_MC_GROUP.get(new_role_id, "intern")
+        reason_text = self.reason.value.strip()
 
+        view = PromoteConfirmView(
+            bot=self.bot,
+            cog=self.cog,
+            invoker=self.invoker,
+            target=self.target,
+            current_idx=self.current_idx,
+            new_idx=self.new_idx,
+            mc_nick=self.mc_nick,
+            reason_text=reason_text,
+        )
+
+        embed = create_design_embed(
+            title="⚡ ПОДТВЕРЖДЕНИЕ ПОВЫШЕНИЯ СОТРУДНИКА",
+            description=(
+                f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
+                f"👑 **Куратор:** {self.invoker.mention}\n\n"
+                f"```diff\n"
+                f"- Было:   {old_rank_name}\n"
+                f"+ Станет: {new_rank_name}\n"
+                f"```\n"
+                f"⚙️ **Синхронизация:**\n"
+                f"• **Discord:** Снятие `<@&{old_role_id}>` ➔ Выдача `<@&{new_role_id}>`\n"
+                f"• **Minecraft:** `lp user {self.mc_nick} parent add {new_lp_group}`\n"
+                f"              `lp user {self.mc_nick} parent remove {old_lp_group}`\n\n"
+                f"📝 **Причина:** `{reason_text}`\n\n"
+                f"Нажмите кнопку подтверждения ниже для выполнения действия:"
+            ),
+            color=COLOR_SUCCESS,
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class PromoteConfirmView(discord.ui.View):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        current_idx: int,
+        new_idx: int,
+        mc_nick: str,
+        reason_text: str,
+    ):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.cog = cog
+        self.invoker = invoker
+        self.target = target
+        self.current_idx = current_idx
+        self.new_idx = new_idx
+        self.mc_nick = mc_nick
+        self.reason_text = reason_text
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.invoker.id and not is_senior_admin(interaction.user.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Действие доступно только инициатору команды.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="✅ Подтвердить повышение", style=discord.ButtonStyle.success)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        old_role_id, old_rank_name = STAFF_HIERARCHY[self.current_idx]
+        new_role_id, new_rank_name = STAFF_HIERARCHY[self.new_idx]
+        old_lp_group = ROLE_ID_TO_MC_GROUP.get(old_role_id, "intern")
+        new_lp_group = ROLE_ID_TO_MC_GROUP.get(new_role_id, "intern")
         guild = interaction.guild
+
         old_role = guild.get_role(old_role_id)
         new_role = guild.get_role(new_role_id)
 
@@ -177,32 +390,28 @@ class PromoteStaffModal(discord.ui.Modal, title="⬆️ Повышение со�
                 await self.target.add_roles(staff_acc)
 
             # If promoted to Curator or higher (idx <= 2), ensure warn access role
-            if new_idx <= 2:
+            if self.new_idx <= 2:
                 warn_acc = guild.get_role(WARN_ACCESS_ROLE_ID)
                 if warn_acc and warn_acc not in self.target.roles:
                     await self.target.add_roles(warn_acc)
         except Exception as e:
             logger.error(f"Failed to update Discord roles on promote: {e}")
 
-        # Sync with Minecraft LuckPerms: add new group, remove old group
-        old_lp_group = ROLE_ID_TO_MC_GROUP.get(old_role_id, "intern")
-        new_lp_group = ROLE_ID_TO_MC_GROUP.get(new_role_id, "intern")
+        # Minecraft LuckPerms sync: parent add new, parent remove old
         if self.mc_nick:
             await self.cog._dispatch_mc_command(guild, f"lp user {self.mc_nick} parent add {new_lp_group}")
             if old_lp_group != new_lp_group:
                 await self.cog._dispatch_mc_command(guild, f"lp user {self.mc_nick} parent remove {old_lp_group}")
 
-        reason_text = self.reason.value.strip()
-
-        # DM notification to target member
+        # Send DM notification
         try:
-            dm_embed = create_security_embed(
+            dm_embed = create_design_embed(
                 title="⚡ ПОВЫШЕНИЕ В ДОЛЖНОСТИ • FLORYMINE",
                 description=(
                     f"Поздравляем! Ваша должность в стаффе была повышена.\n\n"
                     f"👑 **Куратор:** {self.invoker.mention}\n"
                     f"📊 **Новая должность:** **{new_rank_name}**\n"
-                    f"📝 **Причина:** `{reason_text}`"
+                    f"📝 **Причина:** `{self.reason_text}`"
                 ),
                 color=COLOR_SUCCESS,
             )
@@ -211,67 +420,219 @@ class PromoteStaffModal(discord.ui.Modal, title="⬆️ Повышение со�
             pass
 
         # Log into #curators-audit
-        audit_embed = create_security_embed(
+        audit_embed = create_design_embed(
             title="⬆️ ПОВЫШЕНИЕ СОТРУДНИКА СТАФФА",
             description=(
                 f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
                 f"👑 **Куратор:** {self.invoker.mention}\n"
                 f"📊 **Ранг:** `{old_rank_name}` ➔ **`{new_rank_name}`**\n"
-                f"🎮 **Группа LuckPerms:** `{lp_group}`\n"
-                f"📝 **Причина:** `{reason_text}`"
+                f"🎮 **Группа LuckPerms:** `{new_lp_group}`\n"
+                f"📝 **Причина:** `{self.reason_text}`"
             ),
             color=COLOR_SUCCESS,
         )
         await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
 
-        await interaction.response.send_message(
-            f"✅ Сотрудник {self.target.mention} успешно повышен до должности **{new_rank_name}**.",
-            ephemeral=True,
+        success_embed = create_design_embed(
+            title="✅ ПОВЫШЕНИЕ УСПЕШНО ВЫПОЛНЕНО",
+            description=(
+                f"Сотрудник {self.target.mention} (`{self.target.name}`) успешно повышен!\n\n"
+                f"👑 **Новая должность:** **{new_rank_name}**\n"
+                f"🎮 **LuckPerms:** `{new_lp_group}`\n"
+                f"📝 **Причина:** `{self.reason_text}`"
+            ),
+            color=COLOR_SUCCESS,
+        )
+        await interaction.response.edit_message(embed=success_embed, view=None)
+
+    @discord.ui.button(label="Отменить", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cancel_embed = create_design_embed(
+            title="⚪ ДЕЙСТВИЕ ОТМЕНЕНО",
+            description="Повышение сотрудника отменено.",
+            color=COLOR_MUTED,
+        )
+        await interaction.response.edit_message(embed=cancel_embed, view=None)
+
+
+# -------------------------------------------------------------------------
+# 2. DEMOTE FLOW (Dropdown Selection ➔ Reason Modal ➔ 2-Button Confirm)
+# -------------------------------------------------------------------------
+class DemoteRankSelect(discord.ui.Select):
+    def __init__(self, eligible_ranks: list[tuple[int, int, str]]):
+        options = []
+        for idx, r_id, r_name in eligible_ranks:
+            lp_grp = ROLE_ID_TO_MC_GROUP.get(r_id, "intern")
+            daily_h = STAFF_ROLE_DAILY_NORM_HOURS.get(r_id, DEFAULT_DAILY_NORM_HOURS)
+            options.append(
+                discord.SelectOption(
+                    label=r_name,
+                    value=str(idx),
+                    description=f"Норма: {daily_h} ч./день • LuckPerms: {lp_grp}",
+                    emoji=get_rank_emoji(r_id),
+                )
+            )
+        super().__init__(
+            placeholder="Выберите новую (более низкую) должность...",
+            min_values=1,
+            max_values=1,
+            options=options,
         )
 
+    async def callback(self, interaction: discord.Interaction):
+        new_idx = int(self.values[0])
+        modal = DemoteReasonModal(
+            bot=self.view.bot,
+            cog=self.view.cog,
+            invoker=self.view.invoker,
+            target=self.view.target,
+            current_idx=self.view.current_idx,
+            new_idx=new_idx,
+            mc_nick=self.view.mc_nick,
+        )
+        await interaction.response.send_modal(modal)
 
-class DemoteStaffModal(discord.ui.Modal, title="⬇️ Понижение сотрудника Стаффа"):
-    reason = discord.ui.TextInput(
-        label="Причина понижения",
-        placeholder="Например: Невыполнение нормы, ошибки в модерации",
-        min_length=5,
-        max_length=256,
-        required=True,
-    )
-    confirm = discord.ui.TextInput(
-        label="Подтверждение действия",
-        placeholder="Введите 'ПОДТВЕРЖДАЮ'",
-        min_length=12,
-        max_length=12,
-        required=True,
-    )
 
-    def __init__(self, bot: commands.Bot, cog, invoker: discord.Member, target: discord.Member, current_idx: int, mc_nick: str):
-        super().__init__()
+class DemoteRankSelectView(discord.ui.View):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        current_idx: int,
+        mc_nick: str,
+        eligible_ranks: list[tuple[int, int, str]],
+    ):
+        super().__init__(timeout=180)
         self.bot = bot
         self.cog = cog
         self.invoker = invoker
         self.target = target
         self.current_idx = current_idx
         self.mc_nick = mc_nick
+        self.add_item(DemoteRankSelect(eligible_ranks))
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.invoker.id and not is_senior_admin(interaction.user.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Действие доступно только инициатору команды.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Отмена", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cancel_embed = create_design_embed(
+            title="⚪ ДЕЙСТВИЕ ОТМЕНЕНО",
+            description="Понижение сотрудника отменено.",
+            color=COLOR_MUTED,
+        )
+        await interaction.response.edit_message(embed=cancel_embed, view=None)
+
+
+class DemoteReasonModal(discord.ui.Modal, title="⬇️ Причина понижения в должности"):
+    reason = discord.ui.TextInput(
+        label="Причина понижения сотрудника",
+        placeholder="Например: Систематический неактив, ошибки при рассмотрении жалоб",
+        min_length=4,
+        max_length=256,
+        required=True,
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        current_idx: int,
+        new_idx: int,
+        mc_nick: str,
+    ):
+        super().__init__()
+        self.bot = bot
+        self.cog = cog
+        self.invoker = invoker
+        self.target = target
+        self.current_idx = current_idx
+        self.new_idx = new_idx
+        self.mc_nick = mc_nick
 
     async def on_submit(self, interaction: discord.Interaction):
-        if self.confirm.value.strip() != "ПОДТВЕРЖДАЮ":
-            await interaction.response.send_message("❌ Действие отменено: неверное подтверждение.", ephemeral=True)
-            return
-
-        if self.current_idx + 1 >= len(STAFF_HIERARCHY):
-            await interaction.response.send_message(
-                "❌ Сотрудник занимает начальную должность (Стажер). Для полного снятия используйте кнопку «Снять с должности».",
-                ephemeral=True,
-            )
-            return
-
-        new_idx = self.current_idx + 1
-        new_role_id, new_rank_name = STAFF_HIERARCHY[new_idx]
         old_role_id, old_rank_name = STAFF_HIERARCHY[self.current_idx]
+        new_role_id, new_rank_name = STAFF_HIERARCHY[self.new_idx]
+        old_lp_group = ROLE_ID_TO_MC_GROUP.get(old_role_id, "intern")
+        new_lp_group = ROLE_ID_TO_MC_GROUP.get(new_role_id, "intern")
+        reason_text = self.reason.value.strip()
 
+        view = DemoteConfirmView(
+            bot=self.bot,
+            cog=self.cog,
+            invoker=self.invoker,
+            target=self.target,
+            current_idx=self.current_idx,
+            new_idx=self.new_idx,
+            mc_nick=self.mc_nick,
+            reason_text=reason_text,
+        )
+
+        embed = create_design_embed(
+            title="⚠️ ПОДТВЕРЖДЕНИЕ ПОНИЖЕНИЯ СОТРУДНИКА",
+            description=(
+                f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
+                f"👑 **Куратор:** {self.invoker.mention}\n\n"
+                f"```diff\n"
+                f"- Было:   {old_rank_name}\n"
+                f"- Станет: {new_rank_name}\n"
+                f"```\n"
+                f"⚙️ **Синхронизация:**\n"
+                f"• **Discord:** Снятие `<@&{old_role_id}>` ➔ Выдача `<@&{new_role_id}>`\n"
+                f"• **Minecraft:** `lp user {self.mc_nick} parent add {new_lp_group}`\n"
+                f"              `lp user {self.mc_nick} parent remove {old_lp_group}`\n\n"
+                f"📝 **Причина:** `{reason_text}`\n\n"
+                f"Нажмите кнопку подтверждения ниже для выполнения действия:"
+            ),
+            color=COLOR_WARNING,
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class DemoteConfirmView(discord.ui.View):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        current_idx: int,
+        new_idx: int,
+        mc_nick: str,
+        reason_text: str,
+    ):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.cog = cog
+        self.invoker = invoker
+        self.target = target
+        self.current_idx = current_idx
+        self.new_idx = new_idx
+        self.mc_nick = mc_nick
+        self.reason_text = reason_text
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.invoker.id and not is_senior_admin(interaction.user.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Действие доступно только инициатору команды.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="⚠️ Подтвердить понижение", style=discord.ButtonStyle.danger)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        old_role_id, old_rank_name = STAFF_HIERARCHY[self.current_idx]
+        new_role_id, new_rank_name = STAFF_HIERARCHY[self.new_idx]
+        old_lp_group = ROLE_ID_TO_MC_GROUP.get(old_role_id, "intern")
+        new_lp_group = ROLE_ID_TO_MC_GROUP.get(new_role_id, "intern")
         guild = interaction.guild
+
         old_role = guild.get_role(old_role_id)
         new_role = guild.get_role(new_role_id)
 
@@ -282,32 +643,28 @@ class DemoteStaffModal(discord.ui.Modal, title="⬇️ Понижение сот
                 await self.target.add_roles(new_role, reason=f"Понижение куратором {self.invoker}")
 
             # If demoted below Curator (new_idx > 2), strip warn access
-            if new_idx > 2:
+            if self.new_idx > 2:
                 warn_acc = guild.get_role(WARN_ACCESS_ROLE_ID)
                 if warn_acc and warn_acc in self.target.roles:
                     await self.target.remove_roles(warn_acc)
         except Exception as e:
             logger.error(f"Failed to update Discord roles on demote: {e}")
 
-        # Sync with Minecraft LuckPerms: add new group, remove old group
-        old_lp_group = ROLE_ID_TO_MC_GROUP.get(old_role_id, "intern")
-        new_lp_group = ROLE_ID_TO_MC_GROUP.get(new_role_id, "intern")
+        # Minecraft LuckPerms sync
         if self.mc_nick:
             await self.cog._dispatch_mc_command(guild, f"lp user {self.mc_nick} parent add {new_lp_group}")
             if old_lp_group != new_lp_group:
                 await self.cog._dispatch_mc_command(guild, f"lp user {self.mc_nick} parent remove {old_lp_group}")
 
-        reason_text = self.reason.value.strip()
-
-        # DM notification
+        # Send DM notification
         try:
-            dm_embed = create_security_embed(
+            dm_embed = create_design_embed(
                 title="⚠️ ПОНИЖЕНИЕ В ДОЛЖНОСТИ • FLORYMINE",
                 description=(
                     f"Ваша должность в стаффе была понижена.\n\n"
                     f"👑 **Куратор:** {self.invoker.mention}\n"
                     f"📊 **Новая должность:** **{new_rank_name}**\n"
-                    f"📝 **Причина:** `{reason_text}`"
+                    f"📝 **Причина:** `{self.reason_text}`"
                 ),
                 color=COLOR_WARNING,
             )
@@ -316,42 +673,63 @@ class DemoteStaffModal(discord.ui.Modal, title="⬇️ Понижение сот
             pass
 
         # Log into #curators-audit
-        audit_embed = create_security_embed(
+        audit_embed = create_design_embed(
             title="⬇️ ПОНИЖЕНИЕ СОТРУДНИКА СТАФФА",
             description=(
                 f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
                 f"👑 **Куратор:** {self.invoker.mention}\n"
                 f"📊 **Ранг:** `{old_rank_name}` ➔ **`{new_rank_name}`**\n"
-                f"🎮 **Группа LuckPerms:** `{lp_group}`\n"
-                f"📝 **Причина:** `{reason_text}`"
+                f"🎮 **Группа LuckPerms:** `{new_lp_group}`\n"
+                f"📝 **Причина:** `{self.reason_text}`"
             ),
             color=COLOR_WARNING,
         )
         await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
 
-        await interaction.response.send_message(
-            f"⚠️ Сотрудник {self.target.mention} понижен до должности **{new_rank_name}**.",
-            ephemeral=True,
+        success_embed = create_design_embed(
+            title="⚠️ ПОНИЖЕНИЕ ВЫПОЛНЕНО",
+            description=(
+                f"Сотрудник {self.target.mention} (`{self.target.name}`) понижен.\n\n"
+                f"📊 **Новая должность:** **{new_rank_name}**\n"
+                f"🎮 **LuckPerms:** `{new_lp_group}`\n"
+                f"📝 **Причина:** `{self.reason_text}`"
+            ),
+            color=COLOR_WARNING,
         )
+        await interaction.response.edit_message(embed=success_embed, view=None)
+
+    @discord.ui.button(label="Отменить", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cancel_embed = create_design_embed(
+            title="⚪ ДЕЙСТВИЕ ОТМЕНЕНО",
+            description="Понижение сотрудника отменено.",
+            color=COLOR_MUTED,
+        )
+        await interaction.response.edit_message(embed=cancel_embed, view=None)
 
 
-class FireStaffModal(discord.ui.Modal, title="❌ Снятие с должности Стаффа"):
+# -------------------------------------------------------------------------
+# 3. FIRE FLOW (Reason Modal ➔ Danger 2-Button Confirm)
+# -------------------------------------------------------------------------
+class FireReasonModal(discord.ui.Modal, title="❌ Снятие сотрудника с должности"):
     reason = discord.ui.TextInput(
-        label="Причина снятия",
-        placeholder="Например: Грубое нарушение, неактив, собственное желание",
-        min_length=5,
+        label="Причина снятия со стаффа",
+        placeholder="Например: Грубое нарушение правил, слив информации, собственное желание",
+        min_length=4,
         max_length=256,
         required=True,
-    )
-    confirm = discord.ui.TextInput(
-        label="Подтверждение действия",
-        placeholder="Введите 'ПОДТВЕРЖДАЮ'",
-        min_length=12,
-        max_length=12,
-        required=True,
+        style=discord.TextStyle.paragraph,
     )
 
-    def __init__(self, bot: commands.Bot, cog, invoker: discord.Member, target: discord.Member, rank_name: str, mc_nick: str):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        rank_name: str,
+        mc_nick: str,
+    ):
         super().__init__()
         self.bot = bot
         self.cog = cog
@@ -361,12 +739,69 @@ class FireStaffModal(discord.ui.Modal, title="❌ Снятие с должнос
         self.mc_nick = mc_nick
 
     async def on_submit(self, interaction: discord.Interaction):
-        if self.confirm.value.strip() != "ПОДТВЕРЖДАЮ":
-            await interaction.response.send_message("❌ Действие отменено: неверное подтверждение.", ephemeral=True)
-            return
+        reason_text = self.reason.value.strip()
 
+        view = FireConfirmView(
+            bot=self.bot,
+            cog=self.cog,
+            invoker=self.invoker,
+            target=self.target,
+            rank_name=self.rank_name,
+            mc_nick=self.mc_nick,
+            reason_text=reason_text,
+        )
+
+        embed = create_design_embed(
+            title="🚨 ПОДТВЕРЖДЕНИЕ СНЯТИЯ СО СТАФФА (УВОЛЬНЕНИЕ)",
+            description=(
+                f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
+                f"👑 **Куратор:** {self.invoker.mention}\n"
+                f"📊 **Текущая должность:** **{self.rank_name}**\n\n"
+                f"⚠️ **ВНИМАНИЕ! ПОСЛЕДСТВИЯ ДЕЙСТВИЯ:**\n"
+                f"• Будут сняты все роли стаффа в Discord.\n"
+                f"• В Minecraft LuckPerms будут удалены все родительские группы стаффа.\n"
+                f"• Игровые донат-привилегии игрока останутся нетронутыми.\n\n"
+                f"📝 **Причина снятия:** `{reason_text}`\n\n"
+                f"Подтвердите выполнение действия нажатием на кнопку:"
+            ),
+            color=COLOR_DANGER,
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+class FireConfirmView(discord.ui.View):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        rank_name: str,
+        mc_nick: str,
+        reason_text: str,
+    ):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.cog = cog
+        self.invoker = invoker
+        self.target = target
+        self.rank_name = rank_name
+        self.mc_nick = mc_nick
+        self.reason_text = reason_text
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.invoker.id and not is_senior_admin(interaction.user.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Действие доступно только инициатору команды.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="🔴 Снять с должности", style=discord.ButtonStyle.danger)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild = interaction.guild
-        roles_to_strip = [r for r in self.target.roles if r.id in STAFF_ROLE_IDS or r.id == WARN_ACCESS_ROLE_ID or r.id == STAFF_ACCESS_ROLE_ID]
+        roles_to_strip = [
+            r for r in self.target.roles
+            if r.id in STAFF_ROLE_IDS or r.id == WARN_ACCESS_ROLE_ID or r.id == STAFF_ACCESS_ROLE_ID
+        ]
         try:
             if roles_to_strip:
                 await self.target.remove_roles(*roles_to_strip, reason=f"Снятие со стаффа куратором {self.invoker}")
@@ -378,17 +813,15 @@ class FireStaffModal(discord.ui.Modal, title="❌ Снятие с должнос
             for grp in set(ROLE_ID_TO_MC_GROUP.values()):
                 await self.cog._dispatch_mc_command(guild, f"lp user {self.mc_nick} parent remove {grp}")
 
-        reason_text = self.reason.value.strip()
-
-        # DM notification
+        # Send DM notification
         try:
-            dm_embed = create_security_embed(
+            dm_embed = create_design_embed(
                 title="🔴 СНЯТИЕ С ДОЛЖНОСТИ • FLORYMINE",
                 description=(
                     f"Вы были сняты с должности Стаффа на сервере FloryMine.\n\n"
                     f"👑 **Куратор:** {self.invoker.mention}\n"
                     f"📊 **Бывшая должность:** `{self.rank_name}`\n"
-                    f"📝 **Причина:** `{reason_text}`"
+                    f"📝 **Причина:** `{self.reason_text}`"
                 ),
                 color=COLOR_DANGER,
             )
@@ -397,143 +830,434 @@ class FireStaffModal(discord.ui.Modal, title="❌ Снятие с должнос
             pass
 
         # Log into #curators-audit
-        audit_embed = create_security_embed(
+        audit_embed = create_design_embed(
             title="❌ СНЯТИЕ СО СТАФФА (УВОЛЬНЕНИЕ)",
             description=(
                 f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
                 f"👑 **Куратор:** {self.invoker.mention}\n"
                 f"📊 **Бывшая должность:** `{self.rank_name}`\n"
-                f"🎮 **Сброс LuckPerms:** `default`\n"
-                f"📝 **Причина:** `{reason_text}`"
+                f"🎮 **Сброс LuckPerms:** группы стаффа удалены\n"
+                f"📝 **Причина:** `{self.reason_text}`"
             ),
             color=COLOR_DANGER,
         )
         await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
 
-        await interaction.response.send_message(
-            f"🔴 Сотрудник {self.target.mention} снят со всех должностей стаффа.",
-            ephemeral=True,
+        success_embed = create_design_embed(
+            title="🔴 СОТРУДНИК СНЯТ С ДОЛЖНОСТИ",
+            description=(
+                f"Сотрудник {self.target.mention} (`{self.target.name}`) успешно снят со всех должностей стаффа.\n\n"
+                f"📝 **Причина:** `{self.reason_text}`"
+            ),
+            color=COLOR_DANGER,
+        )
+        await interaction.response.edit_message(embed=success_embed, view=None)
+
+    @discord.ui.button(label="Отменить", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cancel_embed = create_design_embed(
+            title="⚪ ДЕЙСТВИЕ ОТМЕНЕНО",
+            description="Снятие сотрудника отменено.",
+            color=COLOR_MUTED,
+        )
+        await interaction.response.edit_message(embed=cancel_embed, view=None)
+
+
+# -------------------------------------------------------------------------
+# 4. ANNUL / DEDUCT PUNISHMENTS FLOW (Specific Selection or Counter Deduction)
+# -------------------------------------------------------------------------
+class AnnulPunishmentSelect(discord.ui.Select):
+    def __init__(self, recent_punishments: list[dict]):
+        options = []
+        for p in recent_punishments[:20]:
+            p_type = (p.get("punishment_type") or "PUNISH").upper()
+            t_nick = p.get("target_nick") or "Unknown"
+            reason = (p.get("reason") or "Без причины")[:28]
+            dur_sec = int(p.get("duration_seconds") or 0)
+            dur_str = format_duration_seconds(dur_sec)
+            p_id = p["id"]
+
+            icon = "🔨" if p_type == "BAN" else ("🔇" if p_type == "MUTE" else "⚠️")
+            options.append(
+                discord.SelectOption(
+                    label=f"[{p_type}] Цель: {t_nick}",
+                    value=f"punish_{p_id}",
+                    description=f"{p_type}: {t_nick} | {dur_str} | {reason}",
+                    emoji=icon,
+                )
+            )
+        super().__init__(
+            placeholder="Выберите конкретное выданное наказание для аннулирования...",
+            min_values=1,
+            max_values=1,
+            options=options,
         )
 
+    async def callback(self, interaction: discord.Interaction):
+        val = self.values[0]
+        p_id = int(val.replace("punish_", ""))
+        # Find item in cache
+        item = next((p for p in self.view.recent_punishments if p["id"] == p_id), None)
+        modal = AnnulReasonModal(
+            bot=self.view.bot,
+            cog=self.view.cog,
+            invoker=self.view.invoker,
+            target=self.view.target,
+            mc_nick=self.view.mc_nick,
+            action_type="specific_punishment",
+            payload={"punishment": item, "punishment_id": p_id},
+        )
+        await interaction.response.send_modal(modal)
 
-class DeductStatsModal(discord.ui.Modal, title="🧹 Списание статистики сотрудника"):
-    stat_type = discord.ui.TextInput(
-        label="Что списать? (баны / муты / варны / всё)",
-        placeholder="Напишите: баны, муты, варны или всё",
-        min_length=3,
-        max_length=20,
-        required=True,
-    )
-    amount = discord.ui.TextInput(
-        label="Количество для списания (число)",
-        placeholder="Например: 2 (для 'всё' напишите 0)",
-        min_length=1,
-        max_length=6,
-        required=True,
-    )
-    reason = discord.ui.TextInput(
-        label="Причина списания",
-        placeholder="Например: Накрутка на друзьях / Ошибочные наказания",
-        min_length=5,
-        max_length=256,
-        required=True,
-    )
-    confirm = discord.ui.TextInput(
-        label="Подтверждение действия",
-        placeholder="Введите 'ПОДТВЕРЖДАЮ'",
-        min_length=12,
-        max_length=12,
-        required=True,
-    )
 
-    def __init__(self, bot: commands.Bot, invoker: discord.Member, target: discord.Member, mc_nick: str):
-        super().__init__()
+class AnnulPunishmentsView(discord.ui.View):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        mc_nick: str,
+        bans_cnt: int,
+        mutes_cnt: int,
+        warns_cnt: int,
+        active_warns: list[dict],
+        recent_punishments: list[dict],
+    ):
+        super().__init__(timeout=180)
         self.bot = bot
+        self.cog = cog
         self.invoker = invoker
         self.target = target
         self.mc_nick = mc_nick
+        self.bans_cnt = bans_cnt
+        self.mutes_cnt = mutes_cnt
+        self.warns_cnt = warns_cnt
+        self.active_warns = active_warns
+        self.recent_punishments = recent_punishments
+
+        # If we have real punishment logs, render the dropdown selection
+        if recent_punishments:
+            self.add_item(AnnulPunishmentSelect(recent_punishments))
+
+        # Add manual counter deduction buttons if specific records are missing or for quick adjustments
+        if bans_cnt > 0:
+            b_btn = discord.ui.Button(label="🔨 Списать 1 бан", style=discord.ButtonStyle.secondary, row=1)
+            b_btn.callback = self._deduct_ban_callback
+            self.add_item(b_btn)
+
+        if mutes_cnt > 0:
+            m_btn = discord.ui.Button(label="🔇 Списать 1 мут", style=discord.ButtonStyle.secondary, row=1)
+            m_btn.callback = self._deduct_mute_callback
+            self.add_item(m_btn)
+
+        if active_warns:
+            w_btn = discord.ui.Button(label=f"⚠️ Снять выговор ({len(active_warns)})", style=discord.ButtonStyle.secondary, row=1)
+            w_btn.callback = self._remove_warn_callback
+            self.add_item(w_btn)
+
+        if is_senior_admin(invoker.id, invoker.guild.id):
+            reset_btn = discord.ui.Button(label="🔄 Обнулить все счётчики", style=discord.ButtonStyle.danger, row=2)
+            reset_btn.callback = self._reset_all_callback
+            self.add_item(reset_btn)
+
+        cancel = discord.ui.Button(label="Отмена", style=discord.ButtonStyle.secondary, row=2)
+        cancel.callback = self._cancel_callback
+        self.add_item(cancel)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.invoker.id and not is_senior_admin(interaction.user.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Действие доступно только инициатору команды.", ephemeral=True)
+            return False
+        return True
+
+    async def _deduct_ban_callback(self, interaction: discord.Interaction):
+        modal = AnnulReasonModal(
+            bot=self.bot,
+            cog=self.cog,
+            invoker=self.invoker,
+            target=self.target,
+            mc_nick=self.mc_nick,
+            action_type="deduct_ban_1",
+            payload={},
+        )
+        await interaction.response.send_modal(modal)
+
+    async def _deduct_mute_callback(self, interaction: discord.Interaction):
+        modal = AnnulReasonModal(
+            bot=self.bot,
+            cog=self.cog,
+            invoker=self.invoker,
+            target=self.target,
+            mc_nick=self.mc_nick,
+            action_type="deduct_mute_1",
+            payload={},
+        )
+        await interaction.response.send_modal(modal)
+
+    async def _remove_warn_callback(self, interaction: discord.Interaction):
+        modal = AnnulReasonModal(
+            bot=self.bot,
+            cog=self.cog,
+            invoker=self.invoker,
+            target=self.target,
+            mc_nick=self.mc_nick,
+            action_type="remove_warn_1",
+            payload={"warn_id": self.active_warns[0]["id"] if self.active_warns else None},
+        )
+        await interaction.response.send_modal(modal)
+
+    async def _reset_all_callback(self, interaction: discord.Interaction):
+        modal = AnnulReasonModal(
+            bot=self.bot,
+            cog=self.cog,
+            invoker=self.invoker,
+            target=self.target,
+            mc_nick=self.mc_nick,
+            action_type="reset_all",
+            payload={},
+        )
+        await interaction.response.send_modal(modal)
+
+    async def _cancel_callback(self, interaction: discord.Interaction):
+        cancel_embed = create_design_embed(
+            title="⚪ ДЕЙСТВИЕ ОТМЕНЕНО",
+            description="Списание статистики отменено.",
+            color=COLOR_MUTED,
+        )
+        await interaction.response.edit_message(embed=cancel_embed, view=None)
+
+
+class AnnulReasonModal(discord.ui.Modal, title="📝 Причина списания / аннулирования"):
+    reason = discord.ui.TextInput(
+        label="Причина аннулирования",
+        placeholder="Например: Апелляция игрока удовлетворена / Ошибка модератора",
+        min_length=4,
+        max_length=256,
+        required=True,
+        style=discord.TextStyle.paragraph,
+    )
+
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        mc_nick: str,
+        action_type: str,
+        payload: dict,
+    ):
+        super().__init__()
+        self.bot = bot
+        self.cog = cog
+        self.invoker = invoker
+        self.target = target
+        self.mc_nick = mc_nick
+        self.action_type = action_type
+        self.payload = payload
 
     async def on_submit(self, interaction: discord.Interaction):
-        if self.confirm.value.strip() != "ПОДТВЕРЖДАЮ":
-            await interaction.response.send_message("❌ Действие отменено: неверное подтверждение.", ephemeral=True)
-            return
+        reason_text = self.reason.value.strip()
 
-        raw_type = self.stat_type.value.strip().lower()
-        try:
-            num = max(0, int(self.amount.value.strip()))
-        except ValueError:
-            await interaction.response.send_message("❌ Укажите корректное число для списания.", ephemeral=True)
-            return
+        view = AnnulConfirmView(
+            bot=self.bot,
+            cog=self.cog,
+            invoker=self.invoker,
+            target=self.target,
+            mc_nick=self.mc_nick,
+            action_type=self.action_type,
+            payload=self.payload,
+            reason_text=reason_text,
+        )
 
+        # Formulate preview text
+        if self.action_type == "specific_punishment":
+            p = self.payload.get("punishment", {})
+            p_type = (p.get("punishment_type") or "PUNISH").upper()
+            t_nick = p.get("target_nick") or "Unknown"
+            dur = format_duration_seconds(int(p.get("duration_seconds") or 0))
+            p_reason = p.get("reason") or "Без причины"
+            details = (
+                f"```yaml\n"
+                f"Тип: {p_type}\n"
+                f"ID: #{p.get('id')}\n"
+                f"Нарушитель: {t_nick}\n"
+                f"Срок: {dur}\n"
+                f"Причина наказания: {p_reason}\n"
+                f"```\n"
+                f"📉 **Действие:** Аннулирование в базе логов, списание -1 {p_type} и отправка отката на сервер."
+            )
+        elif self.action_type == "deduct_ban_1":
+            details = "📉 **Действие:** Списание **1 бана** из игровой статистики модератора."
+        elif self.action_type == "deduct_mute_1":
+            details = "📉 **Действие:** Списание **1 мута** из игровой статистики модератора."
+        elif self.action_type == "remove_warn_1":
+            details = "📉 **Действие:** Снятие **1 активного выговора** из личного дела сотрудника."
+        elif self.action_type == "reset_all":
+            details = "🚨 **Действие:** **Полное обнуление** всех выданных наказаний и снятие всех выговоров."
+        else:
+            details = f"Действие: {self.action_type}"
+
+        embed = create_design_embed(
+            title="⚖️ ПОДТВЕРЖДЕНИЕ АННУЛИРОВАНИЯ",
+            description=(
+                f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
+                f"👑 **Куратор:** {self.invoker.mention}\n\n"
+                f"{details}\n\n"
+                f"📝 **Причина куратора:** `{reason_text}`\n\n"
+                f"Подтвердите выполнение действия нажатием на кнопку:"
+            ),
+            color=COLOR_WARNING,
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
+class AnnulConfirmView(discord.ui.View):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        mc_nick: str,
+        action_type: str,
+        payload: dict,
+        reason_text: str,
+    ):
+        super().__init__(timeout=120)
+        self.bot = bot
+        self.cog = cog
+        self.invoker = invoker
+        self.target = target
+        self.mc_nick = mc_nick
+        self.action_type = action_type
+        self.payload = payload
+        self.reason_text = reason_text
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.invoker.id and not is_senior_admin(interaction.user.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Действие доступно только инициатору команды.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="✅ Подтвердить списание", style=discord.ButtonStyle.success)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild = interaction.guild
         action_desc = ""
 
-        if "бан" in raw_type or "ban" in raw_type:
-            num = max(1, num)
-            await db.adjust_staff_stats(guild.id, user_id=self.target.id, mc_nick=self.mc_nick, bans_delta=-num)
-            action_desc = f"Списано **{num}** бан(ов)"
-        elif "мут" in raw_type or "mute" in raw_type:
-            num = max(1, num)
-            await db.adjust_staff_stats(guild.id, user_id=self.target.id, mc_nick=self.mc_nick, mutes_delta=-num)
-            action_desc = f"Списано **{num}** мут(ов)"
-        elif "варн" in raw_type or "warn" in raw_type:
-            num = max(1, num)
-            warns = await db.get_active_warnings(guild.id, self.target.id)
-            cleared_cnt = 0
-            for w in warns[:num]:
-                if await db.remove_warning(w["id"], guild.id):
-                    cleared_cnt += 1
-            action_desc = f"Снято **{cleared_cnt}** выговор(ов) из базы данных"
-        elif "вс" in raw_type or "all" in raw_type:
-            await db.adjust_staff_stats(guild.id, user_id=self.target.id, mc_nick=self.mc_nick, bans_delta=-9999, mutes_delta=-9999, warns_delta=-9999)
+        if self.action_type == "specific_punishment":
+            p = self.payload.get("punishment", {})
+            p_id = self.payload.get("punishment_id", 0)
+            p_type = (p.get("punishment_type") or "BAN").upper()
+            t_nick = p.get("target_nick") or "Unknown"
+
+            # Invalidate in punishment_logs
+            await db.invalidate_punishment(p_id, guild.id)
+
+            # Deduct from staff_stats
+            if p_type == "BAN":
+                await db.adjust_staff_stats(guild.id, user_id=self.target.id, mc_nick=self.mc_nick, bans_delta=-1)
+            elif p_type == "MUTE":
+                await db.adjust_staff_stats(guild.id, user_id=self.target.id, mc_nick=self.mc_nick, mutes_delta=-1)
+            elif p_type == "WARN":
+                await db.adjust_staff_stats(guild.id, user_id=self.target.id, mc_nick=self.mc_nick, warns_delta=-1)
+
+            # Dispatch sync rollback to Minecraft plugin
+            await self.cog._dispatch_sync_rollback(guild, p_type, self.mc_nick, t_nick, self.reason_text)
+            action_desc = f"Аннулировано наказание #{p_id} ({p_type} для `{t_nick}`), списано -1 из статистики"
+
+        elif self.action_type == "deduct_ban_1":
+            await db.adjust_staff_stats(guild.id, user_id=self.target.id, mc_nick=self.mc_nick, bans_delta=-1)
+            action_desc = "Списан **1 бан** из статистики"
+        elif self.action_type == "deduct_mute_1":
+            await db.adjust_staff_stats(guild.id, user_id=self.target.id, mc_nick=self.mc_nick, mutes_delta=-1)
+            action_desc = "Списан **1 мут** из статистики"
+        elif self.action_type == "remove_warn_1":
+            w_id = self.payload.get("warn_id")
+            if w_id:
+                await db.remove_warning(w_id, guild.id)
+            else:
+                warns = await db.get_active_warnings(guild.id, self.target.id)
+                if warns:
+                    await db.remove_warning(warns[0]["id"], guild.id)
+            action_desc = "Снят **1 выговор** из базы данных"
+        elif self.action_type == "reset_all":
+            await db.adjust_staff_stats(
+                guild.id,
+                user_id=self.target.id,
+                mc_nick=self.mc_nick,
+                bans_delta=-9999,
+                mutes_delta=-9999,
+                warns_delta=-9999,
+            )
             await db.clear_warnings(guild.id, self.target.id)
             action_desc = "Полное обнуление игровой статистики и выговоров"
-        else:
-            await interaction.response.send_message("❌ Неизвестный тип статистики. Укажите: `баны`, `муты`, `варны` или `всё`.", ephemeral=True)
-            return
 
-        reason_text = self.reason.value.strip()
-
-        # DM notification
+        # Send DM notification
         try:
-            dm_embed = create_security_embed(
+            dm_embed = create_design_embed(
                 title="📊 КОРРЕКТИРОВКА СТАТИСТИКИ • FLORYMINE",
                 description=(
                     f"Ваша статистика модерации была изменена Куратором.\n\n"
                     f"👑 **Куратор:** {self.invoker.mention}\n"
                     f"⚡ **Изменение:** {action_desc}\n"
-                    f"📝 **Причина:** `{reason_text}`"
+                    f"📝 **Причина:** `{self.reason_text}`"
                 ),
-                color=COLOR_WARNING,
+                color=COLOR_PRIMARY,
             )
             await self.target.send(embed=dm_embed)
         except Exception:
             pass
 
         # Log into #curators-audit
-        audit_embed = create_security_embed(
+        audit_embed = create_design_embed(
             title="🧹 СПИСАНИЕ СТАТИСТИКИ СОТРУДНИКА",
             description=(
                 f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
                 f"👑 **Куратор:** {self.invoker.mention}\n"
                 f"⚡ **Действие:** {action_desc}\n"
-                f"📝 **Причина:** `{reason_text}`"
+                f"📝 **Причина:** `{self.reason_text}`"
             ),
             color=COLOR_PRIMARY,
         )
         await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
 
-        await interaction.response.send_message(
-            f"✅ Статистика для {self.target.mention} скорректирована: {action_desc}.",
-            ephemeral=True,
+        success_embed = create_design_embed(
+            title="✅ СТАТИСТИКА УСПЕШНО СКОРРЕКТИРОВАНА",
+            description=(
+                f"Действие над сотрудником {self.target.mention} успешно выполнено!\n\n"
+                f"⚡ **Результат:** {action_desc}\n"
+                f"📝 **Причина:** `{self.reason_text}`"
+            ),
+            color=COLOR_SUCCESS,
         )
+        await interaction.response.edit_message(embed=success_embed, view=None)
+
+    @discord.ui.button(label="Отменить", style=discord.ButtonStyle.secondary)
+    async def cancel_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        cancel_embed = create_design_embed(
+            title="⚪ ДЕЙСТВИЕ ОТМЕНЕНО",
+            description="Списание статистики отменено.",
+            color=COLOR_MUTED,
+        )
+        await interaction.response.edit_message(embed=cancel_embed, view=None)
 
 
-# =========================================================================
-# INTERACTIVE CURATOR CONTROL VIEW UNDER /staff-profile
-# =========================================================================
+# -------------------------------------------------------------------------
+# 5. MAIN CURATOR STAFF CONTROL VIEW (Attached to /staff-profile)
+# -------------------------------------------------------------------------
 class CuratorStaffControlView(discord.ui.View):
-    def __init__(self, bot: commands.Bot, cog, invoker: discord.Member, target: discord.Member, target_rank_name: str, target_idx: int, mc_nick: str):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        cog,
+        invoker: discord.Member,
+        target: discord.Member,
+        target_rank_name: str,
+        target_idx: int,
+        mc_nick: str,
+    ):
         super().__init__(timeout=300)
         self.bot = bot
         self.cog = cog
@@ -551,31 +1275,90 @@ class CuratorStaffControlView(discord.ui.View):
 
     @discord.ui.button(label="⬆️ Повысить", style=discord.ButtonStyle.success)
     async def promote_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = PromoteStaffModal(
+        ceiling_idx = get_invoker_allowed_promotion_ceiling_idx(interaction.user)
+
+        # Check ceiling limit
+        if self.target_idx <= ceiling_idx:
+            ceiling_name = STAFF_HIERARCHY[ceiling_idx][1]
+            embed = create_design_embed(
+                title="🛡️ ОГРАНИЧЕНИЕ ПОЛНОМОЧИЙ",
+                description=(
+                    f"Вы можете повышать сотрудников максимум до должности:\n"
+                    f"👑 **{ceiling_name}**\n\n"
+                    f"Сотрудник {self.target.mention} уже занимает ранг **{self.target_rank_name}**.\n"
+                    f"Для дальнейшего повышения обратитесь к Высшей Администрации."
+                ),
+                color=COLOR_WARNING,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        eligible_ranks = [
+            (idx, r_id, r_name)
+            for idx, (r_id, r_name) in enumerate(STAFF_HIERARCHY)
+            if ceiling_idx <= idx < self.target_idx
+        ]
+        if not eligible_ranks:
+            await interaction.response.send_message("❌ Нет доступных должностей для повышения.", ephemeral=True)
+            return
+
+        view = PromoteRankSelectView(
             bot=self.bot,
             cog=self.cog,
             invoker=self.invoker,
             target=self.target,
             current_idx=self.target_idx,
             mc_nick=self.mc_nick,
+            eligible_ranks=eligible_ranks,
         )
-        await interaction.response.send_modal(modal)
+        embed = create_design_embed(
+            title="⬆️ ПОВЫШЕНИЕ СОТРУДНИКА СТАФФА",
+            description=(
+                f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
+                f"📊 **Текущая должность:** **{self.target_rank_name}**\n\n"
+                f"Выберите целевую должность из выпадающего списка ниже:"
+            ),
+            color=COLOR_PRIMARY,
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="⬇️ Понизить", style=discord.ButtonStyle.secondary)
     async def demote_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = DemoteStaffModal(
+        if self.target_idx >= len(STAFF_HIERARCHY) - 1:
+            await interaction.response.send_message(
+                "❌ Сотрудник занимает начальную должность (**Стажер**). Для полного снятия используйте кнопку «Снять с должности».",
+                ephemeral=True,
+            )
+            return
+
+        eligible_ranks = [
+            (idx, r_id, r_name)
+            for idx, (r_id, r_name) in enumerate(STAFF_HIERARCHY)
+            if idx > self.target_idx
+        ]
+        view = DemoteRankSelectView(
             bot=self.bot,
             cog=self.cog,
             invoker=self.invoker,
             target=self.target,
             current_idx=self.target_idx,
             mc_nick=self.mc_nick,
+            eligible_ranks=eligible_ranks,
         )
-        await interaction.response.send_modal(modal)
+        embed = create_design_embed(
+            title="⬇️ ПОНИЖЕНИЕ СОТРУДНИКА СТАФФА",
+            description=(
+                f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
+                f"📊 **Текущая должность:** **{self.target_rank_name}**\n\n"
+                f"Выберите новую (более низкую) должность из списка:"
+            ),
+            color=COLOR_WARNING,
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @discord.ui.button(label="❌ Снять с должности", style=discord.ButtonStyle.danger)
     async def fire_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = FireStaffModal(
+        modal = FireReasonModal(
             bot=self.bot,
             cog=self.cog,
             invoker=self.invoker,
@@ -585,15 +1368,60 @@ class CuratorStaffControlView(discord.ui.View):
         )
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="🧹 Списать статистику", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="⚖️ Аннулировать наказание", style=discord.ButtonStyle.primary)
     async def deduct_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        modal = DeductStatsModal(
+        stats = await db.get_staff_stats(interaction.guild_id, self.target.id, fallback_nicks=[self.mc_nick])
+        bans_cnt = int(stats.get("bans_issued") or 0) if stats else 0
+        mutes_cnt = int(stats.get("mutes_issued") or 0) if stats else 0
+        warns_cnt = int(stats.get("warns_issued") or 0) if stats else 0
+        active_warns = await db.get_active_warnings(interaction.guild_id, self.target.id)
+        recent_punishments = await db.get_recent_punishments_by_moderator(
+            guild_id=interaction.guild_id,
+            moderator_nick=self.mc_nick,
+            moderator_id=self.target.id,
+            limit=20,
+        )
+
+        total_punishments = bans_cnt + mutes_cnt + warns_cnt + len(active_warns) + len(recent_punishments)
+        if total_punishments == 0:
+            embed = create_design_embed(
+                title="ℹ️ НЕТ НАКАЗАНИЙ ДЛЯ СПИСАНИЯ",
+                description=(
+                    f"У сотрудника {self.target.mention} (`{self.mc_nick}`) **нет наказаний для списания**.\n\n"
+                    f"📊 **Показатели модератора:**\n"
+                    f"• Выданных банов: `0`\n"
+                    f"• Выданных мутов: `0`\n"
+                    f"• Выданных варнов: `0`\n"
+                    f"• Активных выговоров: `0`\n\n"
+                    f"Списание недоступно, так как все счётчики чисты."
+                ),
+                color=COLOR_PRIMARY,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        view = AnnulPunishmentsView(
             bot=self.bot,
+            cog=self.cog,
             invoker=self.invoker,
             target=self.target,
             mc_nick=self.mc_nick,
+            bans_cnt=bans_cnt,
+            mutes_cnt=mutes_cnt,
+            warns_cnt=warns_cnt,
+            active_warns=active_warns,
+            recent_punishments=recent_punishments,
         )
-        await interaction.response.send_modal(modal)
+        embed = create_design_embed(
+            title="⚖️ АННУЛИРОВАНИЕ НАКАЗАНИЙ СОТРУДНИКА",
+            description=(
+                f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
+                f"📊 **Текущие показатели:** Банов: `{bans_cnt}` | Мутов: `{mutes_cnt}` | Выговоров: `{len(active_warns)}`\n\n"
+                f"Выберите конкретное наказание из списка ниже для отката и списания:"
+            ),
+            color=COLOR_PRIMARY,
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 # =========================================================================
@@ -670,6 +1498,35 @@ class StaffCog(commands.Cog, name="Staff"):
                 return True
             except Exception as e:
                 logger.error(f"Failed to dispatch MC command '{command}': {e}")
+        return False
+
+    async def _dispatch_sync_rollback(
+        self,
+        guild: discord.Guild,
+        punishment_type: str,
+        moderator_nick: str,
+        target_nick: str,
+        reason: str,
+    ) -> bool:
+        """Sends a ROLLBACK event (__FLORY_SYNC__) to the bridge log channel."""
+        guild_cfg = AUTHORIZED_GUILDS.get(guild.id, {})
+        log_channel_id = guild_cfg.get("log_channel_id", 1391723887846490224)
+        channel = guild.get_channel(log_channel_id)
+        if channel and isinstance(channel, discord.TextChannel):
+            try:
+                packet = {
+                    "action": "ROLLBACK",
+                    "guild_id": guild.id,
+                    "punishment_type": punishment_type.upper(),
+                    "moderator_nick": moderator_nick,
+                    "target_nick": target_nick,
+                    "reason": reason,
+                }
+                await channel.send(f"__FLORY_SYNC__ {json.dumps(packet, ensure_ascii=False)}")
+                logger.info(f"Dispatched ROLLBACK packet to bridge: {packet}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to dispatch ROLLBACK packet: {e}")
         return False
 
     async def _process_sync_payload(self, raw_text: str, default_guild_id: int) -> bool:
