@@ -129,3 +129,43 @@ MUTE_MIN_VALID_SECONDS = 15 * 60  # 15 minutes (900 seconds)
 BAN_MIN_VALID_SECONDS = 7 * 86400  # 7 days (604800 seconds)
 SPOT_CHECK_PROBABILITY = 0.08  # ~8% chance for random audit on valid bans
 
+# Attestation module configuration
+_ATTESTATION_CFG = CONFIG.get("attestation", {})
+ATTESTATION_VOICE_CHANNELS = [
+    int(cid) for cid in _ATTESTATION_CFG.get(
+        "voice_channels",
+        [1391723886864760884, 1391723886864760885, 1391723886864760886]
+    )
+]
+ATTESTATION_MAX_FAILS = int(_ATTESTATION_CFG.get("max_consecutive_fails", 3))
+ATTESTATION_COOLDOWN_DAYS = int(_ATTESTATION_CFG.get("cooldown_days", 30))
+ATTESTATION_MAX_SCHEDULE_DAYS = int(_ATTESTATION_CFG.get("max_schedule_days_forward", 14))
+
+# LuckPerms group mapping
+MC_GROUP_TO_RANK = {
+    "ruk": ("Руководитель", 1544022496934756482),
+    "admin": ("Администратор", 1548646933101420564),
+    "developer": ("Разработчик", 1550434344588288030),
+    "cur": ("Куратор", 1454703503292502155),
+    "gl.moder": ("Гл. Модератор", 1548961652899061841),
+    "st.moder": ("Ст. Модератор", 1478446161810690159),
+    "moder": ("Модератор", 1454703438989492389),
+    "helper": ("Хелпер", 1454703334459048000),
+    "intern": ("Стажер", 1454703157677395969),
+}
+
+ROLE_ID_TO_MC_GROUP = {
+    1544022496934756482: "ruk",
+    1391723885900333214: "ruk",
+    1548646933101420564: "admin",
+    1550434344588288030: "developer",
+    1454703503292502155: "cur",
+    1548961652899061841: "gl.moder",
+    1478446161810690159: "st.moder",
+    1454703438989492389: "moder",
+    1454703334459048000: "helper",
+    1454703157677395969: "intern",
+}
+
+
+

@@ -34,6 +34,8 @@ from core.permissions import (
     is_authorized_guild,
     has_staff_access,
     has_warn_access,
+    can_schedule_attestation,
+    can_unblock_attestation,
     is_senior_admin,
     is_bot_owner,
     get_member_staff_rank,
@@ -1423,6 +1425,77 @@ class CuratorStaffControlView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+    @discord.ui.button(label="🎓 Аттестация", style=discord.ButtonStyle.secondary)
+    async def attestation_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 1. Check if active attestation exists
+        active = await db.get_active_attestation(interaction.guild_id, self.target.id)
+        if active:
+            embed = create_design_embed(
+                title="⚠️ АКТИВНАЯ АТТЕСТАЦИЯ УЖЕ НАЗНАЧЕНА",
+                description=(
+                    f"У сотрудника {self.target.mention} уже назначена аттестация на должность **{active['target_role_name']}**.\n\n"
+                    f"Используйте панель вердикта в профиле сотрудника для подведения итогов."
+                ),
+                color=COLOR_WARNING,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # 2. Check blacklist status
+        history = await db.get_candidate_history(interaction.guild_id, self.target.id)
+        if history and history.get("is_blacklisted"):
+            bl_until = history.get("blacklisted_until")
+            embed = create_design_embed(
+                title="🚫 СОТРУДНИК В ЧЕРНОМ СПИСКЕ АТТЕСТАЦИЙ",
+                description=f"Сотрудник заблокирован для аттестаций до `{bl_until}` из-за 3 неудачных попыток подряд.",
+                color=COLOR_DANGER,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # 3. Ceiling limit (Curators can schedule up to Gl. Moder - idx 3)
+        ceiling_idx = 3
+        if self.target_idx <= ceiling_idx:
+            embed = create_design_embed(
+                title="🛡️ ОГРАНИЧЕНИЕ ПОЛНОМОЧИЙ",
+                description=(
+                    f"Сотрудник {self.target.mention} уже занимает ранг **{self.target_rank_name}**.\n"
+                    f"Аттестации на должности выше Гл. Модератора проводятся только Высшей Администрацией."
+                ),
+                color=COLOR_WARNING,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        eligible_ranks = [
+            (idx, r_id, r_name)
+            for idx, (r_id, r_name) in enumerate(STAFF_HIERARCHY)
+            if ceiling_idx <= idx < self.target_idx
+        ]
+        if not eligible_ranks:
+            await interaction.response.send_message("❌ Нет доступных должностей для аттестации.", ephemeral=True)
+            return
+
+        from cogs.attestation import AttestationRoleSelectView
+        view = AttestationRoleSelectView(
+            bot=self.bot,
+            invoker=self.invoker,
+            candidate=self.target,
+            eligible_ranks=eligible_ranks,
+            mc_nick=self.mc_nick,
+        )
+        embed = create_design_embed(
+            title="🎓 АТТЕСТАЦИЯ СОТРУДНИКА СТАФФА НА ПОВЫШЕНИЕ",
+            description=(
+                f"👤 **Сотрудник:** {self.target.mention} (`{self.target.name}` | MC: `{self.mc_nick}`)\n"
+                f"📊 **Текущая должность:** **{self.target_rank_name}**\n\n"
+                f"Выберите желаемую целевую должность для проведения аттестации:"
+            ),
+            color=COLOR_PRIMARY,
+        )
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
 
 # =========================================================================
 # WEEKLY ONLINE RESET BUTTON VIEW
@@ -1925,12 +1998,96 @@ class StaffCog(commands.Cog, name="Staff"):
             except Exception as e:
                 logger.warning(f"Failed to download avatar for {member_for_avatar.id}: {e}")
 
-        # 4. Check if caller can see curator controls (Viewing someone else's profile with superior rank)
+        # 4. Check if caller can see curator controls (Viewing someone else's profile)
         control_view = None
+        attestation_banner_embed = None
+
         if target.id != interaction.user.id and (has_warn_access(interaction.user) or is_senior_admin(interaction.user.id, interaction.guild.id)):
             _, _, _, caller_idx = get_member_staff_rank(interaction.user)
-            # Friendly-fire shield: caller must be strictly higher in rank (caller_idx < target_idx)
-            if caller_idx < target_idx and is_staff:
+
+            # A. Check if target has an active pending attestation
+            active_att = await db.get_active_attestation(interaction.guild.id, target.id)
+
+            # B. Check if target is blacklisted from attestations (3-Strike Rule)
+            history = await db.get_candidate_history(interaction.guild.id, target.id)
+            is_blacklisted = False
+            bl_str = ""
+            if history and history.get("is_blacklisted"):
+                bl_until_iso = history.get("blacklisted_until")
+                if bl_until_iso:
+                    try:
+                        bl_dt = datetime.fromisoformat(bl_until_iso)
+                        if bl_dt.tzinfo is None:
+                            bl_dt = bl_dt.replace(tzinfo=timezone.utc)
+                        if bl_dt > datetime.now(timezone.utc):
+                            is_blacklisted = True
+                            from utils.time_parser import format_msk
+                            bl_str = format_msk(bl_dt)
+                    except Exception:
+                        is_blacklisted = True
+                        bl_str = str(bl_until_iso)
+
+            if active_att:
+                from cogs.attestation import AttestationVerdictView
+                from utils.time_parser import format_msk, to_discord_timestamp
+                control_view = AttestationVerdictView(
+                    bot=self.bot,
+                    cog=self,
+                    invoker=interaction.user,
+                    candidate=target,
+                    attestation=active_att,
+                    mc_nick=display_nick,
+                )
+                try:
+                    sch_dt = datetime.fromisoformat(active_att["scheduled_at"])
+                    if sch_dt.tzinfo is None:
+                        sch_dt = sch_dt.replace(tzinfo=timezone.utc)
+                    sch_text = f"`{format_msk(sch_dt)}` ({to_discord_timestamp(sch_dt, 'R')})"
+                except Exception:
+                    sch_text = f"`{active_att['scheduled_at']}`"
+
+                attestation_banner_embed = create_design_embed(
+                    title="🎓 НАЗНАЧЕНА АКТИВНАЯ АТТЕСТАЦИЯ",
+                    description=(
+                        f"👤 **Кандидат:** {target.mention} (`{display_nick}`)\n"
+                        f"🏷️ **Должность:** **{active_att['target_role_name']}**\n"
+                        f"🎙️ **Канал:** <#{active_att['voice_channel_id']}>\n"
+                        f"⏱️ **Время:** {sch_text}\n"
+                        f"🛡️ **Назначил:** <@{active_att['curator_id']}>\n\n"
+                        f"Используйте кнопки ниже для вынесения вердикта по результатам собеседования:"
+                    ),
+                    color=COLOR_FLORY_ORANGE,
+                )
+            elif is_blacklisted:
+                from cogs.attestation import AttestationUnblockView
+                if can_unblock_attestation(interaction.user):
+                    control_view = AttestationUnblockView(bot=self.bot, candidate=target)
+                attestation_banner_embed = create_design_embed(
+                    title="🚫 КАНДИДАТ В ЧЕРНОМ СПИСКЕ АТТЕСТАЦИЙ",
+                    description=(
+                        f"Участник {target.mention} получил **3 неудачные попытки подряд** и заблокирован для аттестаций.\n\n"
+                        f"⏳ **Срок окончания ЧС:** `{bl_str}`\n"
+                        f"👑 Досрочное снятие блокировки доступно только Высшей Администрации сервера."
+                    ),
+                    color=COLOR_DANGER,
+                )
+            elif not is_staff:
+                # Regular user (Ticket King candidate) -> Show [ 📝 Назначить аттестацию ]
+                from cogs.attestation import CandidateAttestationStartView
+                eligible_ranks = [
+                    (idx, r_id, r_name)
+                    for idx, (r_id, r_name) in enumerate(STAFF_HIERARCHY)
+                    if 3 <= idx <= 7
+                ]
+                control_view = CandidateAttestationStartView(
+                    bot=self.bot,
+                    invoker=interaction.user,
+                    candidate=target,
+                    mc_nick=display_nick,
+                    eligible_ranks=eligible_ranks,
+                )
+            elif caller_idx < target_idx and is_staff:
+                # Friendly-fire shield: caller must be strictly higher in rank
                 control_view = CuratorStaffControlView(
                     bot=self.bot,
                     cog=self,
@@ -1959,10 +2116,12 @@ class StaffCog(commands.Cog, name="Staff"):
                 is_staff=is_staff,
             )
             file = discord.File(fp=image_buffer, filename=f"staff_profile_{target.id}.png")
+            kwargs = {"file": file}
+            if attestation_banner_embed:
+                kwargs["embed"] = attestation_banner_embed
             if control_view:
-                await interaction.followup.send(file=file, view=control_view)
-            else:
-                await interaction.followup.send(file=file)
+                kwargs["view"] = control_view
+            await interaction.followup.send(**kwargs)
         except Exception as e:
             logger.error(f"Error generating staff profile card: {e}", exc_info=True)
             await interaction.followup.send("❌ Ошибка при генерации карточки профиля стаффа.", ephemeral=True)

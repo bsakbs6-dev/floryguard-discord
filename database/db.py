@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 from config import DATABASE_PATH, WARN_EXPIRY_DAYS
 
@@ -169,6 +169,47 @@ class Database:
                     automod_enabled INTEGER DEFAULT 1,
                     anti_nuke_enabled INTEGER DEFAULT 1,
                     anti_raid_enabled INTEGER DEFAULT 1
+                );
+            """)
+
+            # Table for Candidate & Staff Attestations
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS attestations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id INTEGER NOT NULL,
+                    candidate_id INTEGER NOT NULL,
+                    candidate_nick TEXT NOT NULL,
+                    curator_id INTEGER NOT NULL,
+                    curator_nick TEXT NOT NULL,
+                    target_role_id INTEGER NOT NULL,
+                    target_role_name TEXT NOT NULL,
+                    voice_channel_id INTEGER NOT NULL,
+                    scheduled_at TIMESTAMP NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'PENDING',
+                    result_reason TEXT DEFAULT '',
+                    result_at TIMESTAMP,
+                    reminded_15m INTEGER DEFAULT 0,
+                    reminded_5m INTEGER DEFAULT 0,
+                    created_at TIMESTAMP NOT NULL
+                );
+            """)
+
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_attestations_candidate ON attestations(guild_id, candidate_id, status);")
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_attestations_reminders ON attestations(status, scheduled_at);")
+
+            # Table for Candidate Attestation History & 3-Strike Blacklist
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS attestation_candidates (
+                    guild_id INTEGER NOT NULL,
+                    candidate_id INTEGER NOT NULL,
+                    consecutive_fails INTEGER DEFAULT 0,
+                    total_attempts INTEGER DEFAULT 0,
+                    is_blacklisted INTEGER DEFAULT 0,
+                    blacklisted_until TIMESTAMP,
+                    blacklisted_reason TEXT DEFAULT '',
+                    unblocked_by INTEGER DEFAULT 0,
+                    updated_at TIMESTAMP NOT NULL,
+                    PRIMARY KEY (guild_id, candidate_id)
                 );
             """)
 
@@ -711,6 +752,218 @@ class Database:
             await db.execute(
                 "UPDATE punishment_logs SET is_valid_for_stats = 0 WHERE id = ? AND guild_id = ?",
                 (punishment_id, guild_id),
+            )
+            await db.commit()
+            return True
+
+    # --- ATTESTATIONS & INTERVIEWS ---
+    async def create_attestation(
+        self,
+        guild_id: int,
+        candidate_id: int,
+        candidate_nick: str,
+        curator_id: int,
+        curator_nick: str,
+        target_role_id: int,
+        target_role_name: str,
+        voice_channel_id: int,
+        scheduled_at_iso: str,
+    ) -> int:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO attestations (
+                    guild_id, candidate_id, candidate_nick, curator_id, curator_nick,
+                    target_role_id, target_role_name, voice_channel_id, scheduled_at,
+                    status, result_reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', '', ?)
+                """,
+                (
+                    guild_id,
+                    candidate_id,
+                    candidate_nick,
+                    curator_id,
+                    curator_nick,
+                    target_role_id,
+                    target_role_name,
+                    voice_channel_id,
+                    scheduled_at_iso,
+                    now_iso,
+                ),
+            )
+            await db.commit()
+            return cursor.lastrowid
+
+    async def get_active_attestation(
+        self, guild_id: int, candidate_id: int
+    ) -> Optional[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT * FROM attestations 
+                WHERE guild_id = ? AND candidate_id = ? AND status = 'PENDING'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (guild_id, candidate_id),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def get_attestation_by_id(self, attestation_id: int) -> Optional[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM attestations WHERE id = ?", (attestation_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def get_candidate_history(
+        self, guild_id: int, candidate_id: int
+    ) -> Optional[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM attestation_candidates WHERE guild_id = ? AND candidate_id = ?",
+                (guild_id, candidate_id),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def set_attestation_result(
+        self, attestation_id: int, status: str, result_reason: str = ""
+    ) -> bool:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """
+                UPDATE attestations 
+                SET status = ?, result_reason = ?, result_at = ?
+                WHERE id = ?
+                """,
+                (status, result_reason, now_iso, attestation_id),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def record_candidate_fail(
+        self,
+        guild_id: int,
+        candidate_id: int,
+        reason: str = "",
+        max_fails: int = 3,
+        cooldown_days: int = 30,
+    ) -> Tuple[int, bool, Optional[str]]:
+        """
+        Records a failed or skipped attestation for a candidate.
+        Increments consecutive_fails and total_attempts.
+        If consecutive_fails >= max_fails:
+          Activates 1-month blacklist.
+        Returns:
+          (consecutive_fails: int, is_blacklisted: bool, blacklisted_until_iso: Optional[str])
+        """
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM attestation_candidates WHERE guild_id = ? AND candidate_id = ?",
+                (guild_id, candidate_id),
+            ) as cursor:
+                row = await cursor.fetchone()
+
+            if row:
+                fails = int(row["consecutive_fails"]) + 1
+                total = int(row["total_attempts"]) + 1
+            else:
+                fails = 1
+                total = 1
+
+            is_blacklisted = 0
+            blacklisted_until_iso = None
+            if fails >= max_fails:
+                is_blacklisted = 1
+                blacklisted_until_dt = now + timedelta(days=cooldown_days)
+                blacklisted_until_iso = blacklisted_until_dt.isoformat()
+
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO attestation_candidates (
+                    guild_id, candidate_id, consecutive_fails, total_attempts,
+                    is_blacklisted, blacklisted_until, blacklisted_reason,
+                    unblocked_by, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    guild_id,
+                    candidate_id,
+                    fails,
+                    total,
+                    is_blacklisted,
+                    blacklisted_until_iso,
+                    reason,
+                    now_iso,
+                ),
+            )
+            await db.commit()
+            return fails, bool(is_blacklisted), blacklisted_until_iso
+
+    async def reset_candidate_fails(self, guild_id: int, candidate_id: int) -> bool:
+        """Resets consecutive fails counter upon passing an attestation."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                UPDATE attestation_candidates 
+                SET consecutive_fails = 0, is_blacklisted = 0, blacklisted_until = NULL, updated_at = ?
+                WHERE guild_id = ? AND candidate_id = ?
+                """,
+                (now_iso, guild_id, candidate_id),
+            )
+            await db.commit()
+            return True
+
+    async def unblock_candidate(self, guild_id: int, candidate_id: int, admin_id: int) -> bool:
+        """Prematurely unblocks a candidate from the 1-month attestation blacklist."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """
+                UPDATE attestation_candidates 
+                SET is_blacklisted = 0, blacklisted_until = NULL, consecutive_fails = 0, unblocked_by = ?, updated_at = ?
+                WHERE guild_id = ? AND candidate_id = ?
+                """,
+                (admin_id, now_iso, guild_id, candidate_id),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def cancel_attestation(self, attestation_id: int, reason: str = "") -> bool:
+        return await self.set_attestation_result(attestation_id, "CANCELLED", reason)
+
+    async def get_pending_reminders(self) -> List[Dict[str, Any]]:
+        """Retrieves all pending attestations that may need 15m or 5m reminders."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT * FROM attestations 
+                WHERE status = 'PENDING' AND (reminded_15m = 0 OR reminded_5m = 0)
+                ORDER BY scheduled_at ASC
+                """
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def mark_reminder_sent(self, attestation_id: int, reminder_type: str) -> bool:
+        field = "reminded_15m" if reminder_type == "15m" else "reminded_5m"
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                f"UPDATE attestations SET {field} = 1 WHERE id = ?",
+                (attestation_id,),
             )
             await db.commit()
             return True

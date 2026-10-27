@@ -36,6 +36,16 @@
       { "role_id": 1454703157677395969, "name": "Стажер", "daily_norm_hours": 2.0 }
     ]
   },
+  "attestation": {
+    "voice_channels": [
+      1391723886864760884,
+      1391723886864760885,
+      1391723886864760886
+    ],
+    "max_consecutive_fails": 3,
+    "cooldown_days": 30,
+    "max_schedule_days_forward": 14
+  },
   "moderation_channels": {
     "curators_audit": 1391723887846490225,
     "mutes_log": 1391723887066222594,

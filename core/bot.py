@@ -74,6 +74,7 @@ class FloryGuardBot(commands.Bot):
             "cogs.transfer",
             "cogs.permissions",
             "cogs.staff",
+            "cogs.attestation",
             "cogs.posts",
         ]
 

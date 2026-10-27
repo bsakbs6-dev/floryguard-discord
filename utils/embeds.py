@@ -295,3 +295,207 @@ def build_flory_permissions_embed(
         icon_url=DEFAULT_FOOTER_ICON
     )
     return embed
+
+
+# =========================================================================
+# ATTESTATION & INTERVIEW EMBEDS (DESIGN-ENGINEER GRADE)
+# =========================================================================
+
+def attestation_dm_scheduled_embed(
+    candidate: discord.User | discord.Member,
+    curator: discord.User | discord.Member,
+    target_role_name: str,
+    voice_channel: discord.VoiceChannel | discord.abc.GuildChannel,
+    scheduled_dt: datetime,
+    attempt_num: int = 1,
+    max_attempts: int = 3,
+    note: str = "",
+) -> discord.Embed:
+    from utils.time_parser import format_msk, to_discord_timestamp
+
+    desc = (
+        f"Здравствуйте, {candidate.mention}!\n"
+        f"Вам назначено квалификационное собеседование (аттестация) в команду персонала **FloryMine**.\n\n"
+        f"🏷️ **Целевая должность:** **{target_role_name}**\n\n"
+        f"📋 **ПАРАМЕТРЫ СОБЕСЕДОВАНИЯ:**\n"
+        f"• **Ответственный куратор:** {curator.mention} (`{curator.name}`)\n"
+        f"• **Голосовой канал:** {voice_channel.mention} (`{voice_channel.name}`)\n"
+        f"• **Дата и время:** `{format_msk(scheduled_dt)}`\n"
+        f"• **Таймер Discord:** {to_discord_timestamp(scheduled_dt, 'F')} ({to_discord_timestamp(scheduled_dt, 'R')})\n"
+        f"• **Попытка:** `{attempt_num}` из `{max_attempts}`\n"
+    )
+    if note:
+        desc += f"• **Примечание:** *{note}*\n"
+
+    desc += (
+        f"\nℹ️ **ВАЖНАЯ ИНФОРМАЦИЯ ДЛЯ КАНДИДАТА:**\n"
+        f"• Вам **автоматически выдан доступ** к голосовому каналу {voice_channel.mention}.\n"
+        f"• Бот отправит вам личные напоминания **за 15 минут** и **за 5 минут** до начала.\n"
+        f"• Пожалуйста, настройте микрофон заранее и ознакомьтесь с регламентом сервера.\n"
+        f"• Всего дается **{max_attempts} попытки**. 3 пропуска/провала подряд влекут блокировку на 1 месяц."
+    )
+
+    embed = discord.Embed(
+        title="🎓 НАЗНАЧЕНА АТТЕСТАЦИЯ В СТАФФ • FLORYMINE",
+        description=desc,
+        color=COLOR_FLORY_ORANGE,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_thumbnail(url="https://cdn.discordapp.com/emojis/1234567890.png" if False else DEFAULT_FOOTER_ICON)
+    embed.set_footer(
+        text="FloryGuard Staff Management • Личный кабинет кандидата",
+        icon_url=DEFAULT_FOOTER_ICON,
+    )
+    return embed
+
+
+def attestation_audit_embed(
+    action_title: str,
+    candidate: discord.User | discord.Member,
+    curator: discord.User | discord.Member,
+    target_role_name: str,
+    voice_channel: Optional[discord.VoiceChannel | discord.abc.GuildChannel],
+    scheduled_dt: Optional[datetime],
+    status_text: str,
+    color: int = COLOR_PRIMARY,
+    details: str = "",
+) -> discord.Embed:
+    from utils.time_parser import format_msk, to_discord_timestamp
+
+    desc = (
+        f"👤 **Кандидат:** {candidate.mention} (`{candidate.name}` | ID: `{candidate.id}`)\n"
+        f"🛡️ **Куратор:** {curator.mention} (`{curator.name}` | ID: `{curator.id}`)\n"
+        f"🏷️ **Должность:** **{target_role_name}**\n"
+        f"📊 **Статус:** **{status_text}**\n"
+    )
+    if voice_channel:
+        desc += f"🎙️ **Канал:** {voice_channel.mention} (`{voice_channel.name}`)\n"
+    if scheduled_dt:
+        desc += f"⏱️ **Время проведения:** `{format_msk(scheduled_dt)}` ({to_discord_timestamp(scheduled_dt, 'R')})\n"
+    if details:
+        desc += f"\n📝 **Детали / Причина:**\n{details}\n"
+
+    embed = discord.Embed(
+        title=action_title,
+        description=desc,
+        color=color,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_footer(
+        text="FloryGuard Security Audit • Attestation System",
+        icon_url=DEFAULT_FOOTER_ICON,
+    )
+    return embed
+
+
+def attestation_reminder_embed(
+    candidate: discord.User | discord.Member,
+    curator: discord.User | discord.Member,
+    target_role_name: str,
+    voice_channel: discord.VoiceChannel | discord.abc.GuildChannel,
+    scheduled_dt: datetime,
+    minutes_left: int,
+) -> discord.Embed:
+    from utils.time_parser import to_discord_timestamp
+
+    urgent = minutes_left <= 5
+    title = "🚨 НАПОМИНАНИЕ: АТТЕСТАЦИЯ ЧЕРЕЗ 5 МИНУТ!" if urgent else "⏱️ НАПОМИНАНИЕ О СКОРОЙ АТТЕСТАЦИИ"
+    color = COLOR_DANGER if urgent else COLOR_WARNING
+
+    desc = (
+        f"Внимание, {candidate.mention}!\n\n"
+        f"До начала вашей аттестации на должность **{target_role_name}** осталось ровно **{minutes_left} минут**!\n\n"
+        f"🎙️ **Голосовой канал:** {voice_channel.mention}\n"
+        f"👤 **Проводящий куратор:** {curator.mention}\n"
+        f"⏳ **Время начала:** {to_discord_timestamp(scheduled_dt, 't')} ({to_discord_timestamp(scheduled_dt, 'R')})\n\n"
+        f"⚠️ Пожалуйста, зайдите в указанный голосовой канал и ожидайте подключения куратора."
+    )
+
+    embed = discord.Embed(
+        title=title,
+        description=desc,
+        color=color,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_footer(
+        text="FloryGuard Staff Management • Автоматическое напоминание",
+        icon_url=DEFAULT_FOOTER_ICON,
+    )
+    return embed
+
+
+def attestation_result_dm_embed(
+    candidate: discord.User | discord.Member,
+    curator: discord.User | discord.Member,
+    target_role_name: str,
+    status: str,
+    reason: str,
+    consecutive_fails: int = 0,
+    is_blacklisted: bool = False,
+    blacklisted_until_str: Optional[str] = None,
+) -> discord.Embed:
+    if status == "PASSED":
+        title = "🎉 АТТЕСТАЦИЯ УСПЕШНО ПРОЙДЕНА!"
+        color = COLOR_SUCCESS
+        desc = (
+            f"Поздравляем, {candidate.mention}!\n\n"
+            f"Вы успешно сдали квалификационную аттестацию на должность **{target_role_name}**!\n"
+            f"Вам выданы соответствующие роли на сервере Discord и привилегии на серверах Minecraft.\n\n"
+            f"👤 **Принимающий куратор:** {curator.mention}\n"
+        )
+        if reason:
+            desc += f"📝 **Отзыв куратора:** *{reason}*\n"
+        desc += "\n🚀 Желаем успешной, честной и продуктивной работы на проекте FloryMine!"
+    elif status == "FAILED":
+        title = "❌ АТТЕСТАЦИЯ НЕ СДАНА"
+        color = COLOR_DANGER
+        desc = (
+            f"Здравствуйте, {candidate.mention}.\n\n"
+            f"К сожалению, ваша аттестация на должность **{target_role_name}** не была сдана.\n"
+            f"👤 **Куратор:** {curator.mention}\n"
+            f"📌 **Причина / Замечания:** `{reason or 'Не набран проходной балл'}`\n\n"
+        )
+        if is_blacklisted:
+            desc += (
+                f"🚫 **ВНИМАНИЕ (3-Strike Rule):**\n"
+                f"Вы получили 3 неудачные попытки подряд. На ваш аккаунт наложен **запрет на участие в аттестациях на 1 месяц**"
+            )
+            if blacklisted_until_str:
+                desc += f" (до `{blacklisted_until_str}`).\n"
+            else:
+                desc += ".\n"
+            desc += "Досрочный пересмотр возможен только через обращение к Высшей Администрации сервера."
+        else:
+            remaining = max(0, 3 - consecutive_fails)
+            desc += f"📊 Неудачных попыток подряд: `{consecutive_fails}/3` (Осталось попыток: `{remaining}`)."
+    else:  # SKIPPED
+        title = "⚠️ АТТЕСТАЦИЯ ПРОПУЩЕНА (НЕЯВКА)"
+        color = COLOR_WARNING
+        desc = (
+            f"Здравствуйте, {candidate.mention}.\n\n"
+            f"Зафиксирована неявка на аттестацию на должность **{target_role_name}**.\n"
+            f"👤 **Куратор:** {curator.mention}\n"
+            f"📌 **Причина:** `{reason or 'Кандидат не явился в голосовой канал'}`\n\n"
+        )
+        if is_blacklisted:
+            desc += (
+                f"🚫 **ВНИМАНИЕ (3-Strike Rule):**\n"
+                f"Вы накопили 3 пропуска/провала подряд. Вам установлен **запрет на аттестации на 1 месяц**.\n"
+                f"Снять блокировку может только Высшая Администрация."
+            )
+        else:
+            remaining = max(0, 3 - consecutive_fails)
+            desc += f"📊 Неудачных попыток подряд: `{consecutive_fails}/3` (Осталось попыток: `{remaining}`)."
+
+    embed = discord.Embed(
+        title=title,
+        description=desc,
+        color=color,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.set_footer(
+        text="FloryGuard Staff Management • Итоги аттестации",
+        icon_url=DEFAULT_FOOTER_ICON,
+    )
+    return embed
+

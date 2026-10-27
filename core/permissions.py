@@ -101,6 +101,28 @@ def has_warn_access(member: discord.Member) -> bool:
     return WARN_ACCESS_ROLE_ID in member_role_ids
 
 
+def can_schedule_attestation(member: discord.Member) -> bool:
+    """
+    Checks if member can schedule or grade staff attestations:
+    Requires curator role 1454703598834421831 (WARN_ACCESS_ROLE_ID),
+    any privileged role, or Senior Admin / Owner.
+    """
+    return has_warn_access(member)
+
+
+def can_unblock_attestation(member: discord.Member) -> bool:
+    """
+    Checks if member can prematurely unblock a candidate from 1-month attestation blacklist:
+    Strictly limited to Senior Administrators, Bot Owners, or Higher Administration (1391723885900333214).
+    """
+    guild_id = member.guild.id if member.guild else None
+    if is_bot_owner(member.id, guild_id) or is_senior_admin(member.id, guild_id):
+        return True
+    member_role_ids = {r.id for r in member.roles}
+    return 1391723885900333214 in member_role_ids
+
+
+
 def check_moderation_channel(interaction: discord.Interaction) -> Tuple[bool, Optional[str]]:
     """
     Enforces the moderation command execution channel policy:
