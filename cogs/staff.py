@@ -2297,24 +2297,27 @@ class StaffCog(commands.Cog, name="Staff"):
         # 1. REQUEST PROOF BUTTON (Curators, Admins, Higher Admins, Head Moders, 'Отвечает | Staff')
         # ---------------------------------------------------------------------
         if custom_id.startswith("flory_req_proof:"):
-            if not isinstance(interaction.user, discord.Member) or not can_request_punishment_proof(interaction.user):
-                await interaction.response.send_message(
-                    "❌ У вас нет прав запрашивать доказательства по данному наказанию.\n"
-                    "Данное действие доступно только Кураторам, Администрации, Гл. Модераторам и сотрудникам с ролью `Отвечает | Staff`.",
-                    ephemeral=True,
-                )
-                return
-
             try:
                 punish_id = int(custom_id.split(":")[1])
             except (IndexError, ValueError):
                 await interaction.response.send_message("❌ Некорректный ID наказания.", ephemeral=True)
                 return
 
-            guild_id = interaction.guild.id if interaction.guild else (self.bot.guilds[0].id if self.bot.guilds else 0)
-            punishment = await db.get_punishment_by_id(punish_id, guild_id)
+            punishment = await db.get_punishment_by_id(punish_id)
             if not punishment:
                 await interaction.response.send_message("❌ Запись о наказании не найдена в базе данных.", ephemeral=True)
+                return
+
+            p_guild_id = int(punishment.get("guild_id") or 0)
+            guild = interaction.guild or (self.bot.get_guild(p_guild_id) if p_guild_id else None) or (self.bot.guilds[0] if self.bot.guilds else None)
+            guild_id = guild.id if guild else 0
+
+            if not can_request_punishment_proof(interaction.user, guild=guild):
+                await interaction.response.send_message(
+                    "❌ У вас нет прав запрашивать доказательства по данному наказанию.\n"
+                    "Данное действие доступно только Кураторам, Администрации, Гл. Модераторам и сотрудникам с ролью `Отвечает | Staff`.",
+                    ephemeral=True,
+                )
                 return
 
             # Check if proof already requested
@@ -2413,16 +2416,19 @@ class StaffCog(commands.Cog, name="Staff"):
                 await interaction.response.send_message("❌ Некорректный ID наказания.", ephemeral=True)
                 return
 
-            guild_id = interaction.guild.id if interaction.guild else (self.bot.guilds[0].id if self.bot.guilds else 0)
-            punishment = await db.get_punishment_by_id(punish_id, guild_id)
+            punishment = await db.get_punishment_by_id(punish_id)
             if not punishment:
                 await interaction.response.send_message("❌ Запись о наказании не найдена в базе данных.", ephemeral=True)
                 return
 
+            p_guild_id = int(punishment.get("guild_id") or 0)
+            guild = interaction.guild or (self.bot.get_guild(p_guild_id) if p_guild_id else None) or (self.bot.guilds[0] if self.bot.guilds else None)
+            guild_id = guild.id if guild else 0
+
             mod_id = int(punishment.get("moderator_id") or 0)
             mod_nick = punishment.get("moderator_nick", "Unknown")
             is_mod = (interaction.user.id == mod_id)
-            is_staff_mgmt = isinstance(interaction.user, discord.Member) and can_request_punishment_proof(interaction.user)
+            is_staff_mgmt = can_request_punishment_proof(interaction.user, guild=guild)
 
             if not is_mod and not is_staff_mgmt:
                 # Check if current user is linked to moderator nick
@@ -2565,23 +2571,25 @@ class StaffCog(commands.Cog, name="Staff"):
         # 5. CURATOR VERDICT: НАКАЗАНИЕ ВЕРНО
         # ---------------------------------------------------------------------
         elif custom_id.startswith("flory_proof_valid:"):
-            if not isinstance(interaction.user, discord.Member) or not can_request_punishment_proof(interaction.user):
-                await interaction.response.send_message(
-                    "❌ У вас нет прав для вынесения вердикта по доказательствам.", ephemeral=True
-                )
-                return
-
             try:
                 punish_id = int(custom_id.split(":")[1])
             except (IndexError, ValueError):
                 await interaction.response.send_message("❌ Некорректный ID наказания.", ephemeral=True)
                 return
 
-            guild = interaction.guild or (self.bot.guilds[0] if self.bot.guilds else None)
-            guild_id = guild.id if guild else 0
-            punishment = await db.get_punishment_by_id(punish_id, guild_id)
+            punishment = await db.get_punishment_by_id(punish_id)
             if not punishment:
                 await interaction.response.send_message("❌ Запись о наказании не найдена.", ephemeral=True)
+                return
+
+            p_guild_id = int(punishment.get("guild_id") or 0)
+            guild = interaction.guild or (self.bot.get_guild(p_guild_id) if p_guild_id else None) or (self.bot.guilds[0] if self.bot.guilds else None)
+            guild_id = guild.id if guild else 0
+
+            if not can_request_punishment_proof(interaction.user, guild=guild):
+                await interaction.response.send_message(
+                    "❌ У вас нет прав для вынесения вердикта по доказательствам.", ephemeral=True
+                )
                 return
 
             if punishment.get("proof_status") in ("APPROVED", "REJECTED", "EXPIRED_NO_PROOF", "EXPIRED_AUTO_APPROVED"):
@@ -2659,23 +2667,25 @@ class StaffCog(commands.Cog, name="Staff"):
         # 6. CURATOR VERDICT: НАКАЗАНИЕ НЕ ВЕРНО (ВЫГОВОР МОДЕРАТОРУ)
         # ---------------------------------------------------------------------
         elif custom_id.startswith("flory_proof_invalid:"):
-            if not isinstance(interaction.user, discord.Member) or not can_request_punishment_proof(interaction.user):
-                await interaction.response.send_message(
-                    "❌ У вас нет прав для вынесения вердикта по доказательствам.", ephemeral=True
-                )
-                return
-
             try:
                 punish_id = int(custom_id.split(":")[1])
             except (IndexError, ValueError):
                 await interaction.response.send_message("❌ Некорректный ID наказания.", ephemeral=True)
                 return
 
-            guild = interaction.guild or (self.bot.guilds[0] if self.bot.guilds else None)
-            guild_id = guild.id if guild else 0
-            punishment = await db.get_punishment_by_id(punish_id, guild_id)
+            punishment = await db.get_punishment_by_id(punish_id)
             if not punishment:
                 await interaction.response.send_message("❌ Запись о наказании не найдена.", ephemeral=True)
+                return
+
+            p_guild_id = int(punishment.get("guild_id") or 0)
+            guild = interaction.guild or (self.bot.get_guild(p_guild_id) if p_guild_id else None) or (self.bot.guilds[0] if self.bot.guilds else None)
+            guild_id = guild.id if guild else 0
+
+            if not can_request_punishment_proof(interaction.user, guild=guild):
+                await interaction.response.send_message(
+                    "❌ У вас нет прав для вынесения вердикта по доказательствам.", ephemeral=True
+                )
                 return
 
             if punishment.get("proof_status") in ("APPROVED", "REJECTED", "EXPIRED_NO_PROOF", "EXPIRED_AUTO_APPROVED"):
@@ -3413,18 +3423,19 @@ class StaffCog(commands.Cog, name="Staff"):
     async def punishment_info_command(
         self, interaction: discord.Interaction, punishment_id: int
     ):
-        if not await self._check_guild_auth(interaction):
+        guild = interaction.guild or (self.bot.guilds[0] if self.bot.guilds else None)
+        if guild and not is_authorized_guild(guild):
+            await interaction.response.send_message(f"⚠️ {UNAUTHORIZED_MESSAGE}", ephemeral=True)
             return
 
-        if not isinstance(interaction.user, discord.Member) or not can_request_punishment_proof(interaction.user):
+        if not can_request_punishment_proof(interaction.user, guild=guild):
             await interaction.response.send_message(
                 "❌ Команда доступна только Кураторам, Администрации, Гл. Модераторам и сотрудникам с ролью `Отвечает | Staff`.",
                 ephemeral=True,
             )
             return
 
-        guild = interaction.guild
-        punishment = await db.get_punishment_by_id(punishment_id, guild.id)
+        punishment = await db.get_punishment_by_id(punishment_id)
         if not punishment:
             await interaction.response.send_message(
                 f"❌ Наказание с ID `#{punishment_id}` не найдено в базе данных.", ephemeral=True

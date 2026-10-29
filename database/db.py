@@ -767,22 +767,31 @@ class Database:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
 
-    async def get_punishment_by_id(self, punishment_id: int, guild_id: int) -> Optional[Dict[str, Any]]:
+    async def get_punishment_by_id(self, punishment_id: int, guild_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            async with db.execute(
-                "SELECT * FROM punishment_logs WHERE id = ? AND guild_id = ?",
-                (punishment_id, guild_id),
-            ) as cursor:
+            if guild_id and guild_id > 0:
+                query = "SELECT * FROM punishment_logs WHERE id = ? AND guild_id = ?"
+                params = (punishment_id, guild_id)
+            else:
+                query = "SELECT * FROM punishment_logs WHERE id = ?"
+                params = (punishment_id,)
+            async with db.execute(query, params) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
 
-    async def invalidate_punishment(self, punishment_id: int, guild_id: int) -> bool:
+    async def invalidate_punishment(self, punishment_id: int, guild_id: Optional[int] = None) -> bool:
         async with aiosqlite.connect(self.db_path) as db:
-            await db.execute(
-                "UPDATE punishment_logs SET is_valid_for_stats = 0 WHERE id = ? AND guild_id = ?",
-                (punishment_id, guild_id),
-            )
+            if guild_id and guild_id > 0:
+                await db.execute(
+                    "UPDATE punishment_logs SET is_valid_for_stats = 0 WHERE id = ? AND guild_id = ?",
+                    (punishment_id, guild_id),
+                )
+            else:
+                await db.execute(
+                    "UPDATE punishment_logs SET is_valid_for_stats = 0 WHERE id = ?",
+                    (punishment_id,),
+                )
             await db.commit()
             return True
 
@@ -797,9 +806,9 @@ class Database:
                     proof_requested_at = ?,
                     proof_status = 'PENDING_MOD',
                     proof_materials = '[]'
-                WHERE id = ? AND guild_id = ?
+                WHERE id = ? AND (? = 0 OR guild_id = ?)
                 """,
-                (requested_by, now, punishment_id, guild_id),
+                (requested_by, now, punishment_id, guild_id, guild_id),
             )
             await db.commit()
             return True
@@ -817,8 +826,8 @@ class Database:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                "SELECT proof_materials FROM punishment_logs WHERE id = ? AND guild_id = ?",
-                (punishment_id, guild_id),
+                "SELECT proof_materials FROM punishment_logs WHERE id = ? AND (? = 0 OR guild_id = ?)",
+                (punishment_id, guild_id, guild_id),
             ) as cursor:
                 row = await cursor.fetchone()
                 if not row:
@@ -831,8 +840,8 @@ class Database:
                     materials = []
             materials.append(entry)
             await db.execute(
-                "UPDATE punishment_logs SET proof_materials = ? WHERE id = ? AND guild_id = ?",
-                (json.dumps(materials, ensure_ascii=False), punishment_id, guild_id),
+                "UPDATE punishment_logs SET proof_materials = ? WHERE id = ? AND (? = 0 OR guild_id = ?)",
+                (json.dumps(materials, ensure_ascii=False), punishment_id, guild_id, guild_id),
             )
             await db.commit()
             return True
@@ -857,7 +866,7 @@ class Database:
                     proof_status = 'PENDING_CURATOR',
                     proof_curator_msg_id = CASE WHEN ? > 0 THEN ? ELSE proof_curator_msg_id END,
                     proof_curator_channel_id = CASE WHEN ? > 0 THEN ? ELSE proof_curator_channel_id END
-                WHERE id = ? AND guild_id = ?
+                WHERE id = ? AND (? = 0 OR guild_id = ?)
                 """,
                 (
                     proof_url, proof_url,
@@ -865,7 +874,7 @@ class Database:
                     now,
                     curator_msg_id, curator_msg_id,
                     curator_channel_id, curator_channel_id,
-                    punishment_id, guild_id,
+                    punishment_id, guild_id, guild_id,
                 ),
             )
             await db.commit()
@@ -881,9 +890,9 @@ class Database:
                 """
                 UPDATE punishment_logs
                 SET proof_status = ?, proof_reviewed_by = ?, proof_reviewed_at = ?
-                WHERE id = ? AND guild_id = ?
+                WHERE id = ? AND (? = 0 OR guild_id = ?)
                 """,
-                (status, reviewed_by, now, punishment_id, guild_id),
+                (status, reviewed_by, now, punishment_id, guild_id, guild_id),
             )
             await db.commit()
             return True

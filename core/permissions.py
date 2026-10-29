@@ -146,17 +146,36 @@ CAN_REQUEST_PROOF_ROLE_IDS = {
 }
 
 
-def can_request_punishment_proof(member: discord.Member) -> bool:
+def can_request_punishment_proof(
+    user_or_member: discord.Member | discord.User, guild: Optional[discord.Guild] = None
+) -> bool:
     """
-    Checks if member can request proof for bans/mutes:
+    Checks if user or member can request proof for bans/mutes or evaluate proof verdicts:
     Available strictly for Curators, Admins, Senior Admins/Owner, Head Moderators (Гл. Модер),
     and anyone with role 'Отвечает | Staff' (1454703598834421831).
+    Works seamlessly both in guild text channels and in Direct Messages (DMs).
     """
-    guild_id = member.guild.id if member.guild else None
-    if is_higher_admin(member.id, guild_id):
+    uid = user_or_member.id
+    target_guild = guild or getattr(user_or_member, "guild", None)
+    guild_id = target_guild.id if target_guild else None
+
+    # Higher Administrators / Owners always have permission (in DM or guild)
+    if is_higher_admin(uid, guild_id):
         return True
-    member_roles = {r.id for r in member.roles}
-    return bool(member_roles & CAN_REQUEST_PROOF_ROLE_IDS)
+
+    # Check roles if it's already a discord.Member
+    if isinstance(user_or_member, discord.Member):
+        member_roles = {r.id for r in user_or_member.roles}
+        return bool(member_roles & CAN_REQUEST_PROOF_ROLE_IDS)
+
+    # If it's a discord.User (e.g. inside DM), look up their membership in target_guild
+    if target_guild:
+        m = target_guild.get_member(uid)
+        if m:
+            member_roles = {r.id for r in m.roles}
+            return bool(member_roles & CAN_REQUEST_PROOF_ROLE_IDS)
+
+    return False
 
 
 
