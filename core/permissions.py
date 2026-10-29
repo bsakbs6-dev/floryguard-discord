@@ -4,6 +4,7 @@ from typing import Optional, Tuple
 from config import (
     OWNER_IDS,
     SENIOR_ADMIN_IDS,
+    HIGHER_ADMIN_IDS,
     AUTHORIZED_GUILDS,
     UNAUTHORIZED_MESSAGE,
     STAFF_ACCESS_ROLE_ID,
@@ -56,16 +57,27 @@ def is_bot_owner(user_id: int, guild_id: Optional[int] = None) -> bool:
     return False
 
 
+def is_higher_admin(user_id: int, guild_id: Optional[int] = None) -> bool:
+    """
+    Checks if the user is an absolute Higher Administrator (1398717669607473254, 1291370925303795733,
+    or configured senior admin/owner). They enjoy total immunity from moderation, dismissal, and demotion.
+    """
+    if user_id in HIGHER_ADMIN_IDS or user_id in OWNER_IDS or user_id in SENIOR_ADMIN_IDS:
+        return True
+    return is_senior_admin(user_id, guild_id)
+
+
 def is_senior_admin(user_id: int, guild_id: Optional[int] = None) -> bool:
     """
     Checks if the user is a designated senior administrator:
-    - Server Owner on the specific guild
-    - Global Senior Administrator (1291370925303795733)
+    - User ID in HIGHER_ADMIN_IDS (1398717669607473254, 1291370925303795733)
+    - Server Owner / Bot Owner globally or on the specific guild
+    - Global Senior Administrator
     - Server-specific Senior Administrator
     """
-    if guild_id and is_bot_owner(user_id, guild_id):
+    if user_id in HIGHER_ADMIN_IDS or user_id in SENIOR_ADMIN_IDS:
         return True
-    if user_id in SENIOR_ADMIN_IDS:
+    if is_bot_owner(user_id, guild_id):
         return True
     if guild_id and guild_id in AUTHORIZED_GUILDS:
         guild_senior_admins = set(AUTHORIZED_GUILDS[guild_id].get("senior_admin_ids", []))
@@ -158,20 +170,26 @@ def get_member_staff_rank(member: discord.Member) -> Tuple[str, int, bool, int]:
     """
     Determines the staff member's highest rank from the 8-tier STAFF_HIERARCHY.
     Returns: (rank_name, max_warns, is_trainee, hierarchy_index)
-    Lower hierarchy_index means higher authority (0 = Высшая Администрация, 7 = Стажер).
+    Lower hierarchy_index means higher authority (-2 = Владелец, -1 = Высшая Администрация, 0 = Высшая Администрация (роль), 7 = Стажер).
     """
+    guild_id = member.guild.id if member.guild else None
+
+    # 1. Absolute Higher Administration & Owner immunity (independent of roles, donate, or links)
+    if is_bot_owner(member.id, guild_id):
+        return "Владелец", DEFAULT_STAFF_MAX_WARNS, False, -2
+    if is_higher_admin(member.id, guild_id):
+        return "Высшая Администрация", DEFAULT_STAFF_MAX_WARNS, False, -1
+
     member_role_ids = {r.id for r in member.roles}
 
+    # 2. Staff Hierarchy roles
     for idx, (role_id, role_name) in enumerate(STAFF_HIERARCHY):
         if role_id in member_role_ids:
             is_trainee = (role_id == TRAINEE_ROLE_ID)
             max_warns = TRAINEE_MAX_WARNS if is_trainee else DEFAULT_STAFF_MAX_WARNS
             return role_name, max_warns, is_trainee, idx
 
-    if is_bot_owner(member.id, member.guild.id):
-        return "Владелец", DEFAULT_STAFF_MAX_WARNS, False, -2
-    if is_senior_admin(member.id, member.guild.id):
-        return "Высшая Администрация", DEFAULT_STAFF_MAX_WARNS, False, -1
+    # 3. Privileged, Curator, or Base Staff roles
     if member_role_ids & PRIVILEGED_ROLES_UNRESTRICTED_CHANNELS:
         return "Администрация", DEFAULT_STAFF_MAX_WARNS, False, 1
     if WARN_ACCESS_ROLE_ID in member_role_ids:

@@ -55,6 +55,7 @@ CONFIG = load_config()
 # Fast access constants
 OWNER_IDS = set(CONFIG.get("hierarchy", {}).get("owner_ids", [1398717669607473254]))
 SENIOR_ADMIN_IDS = set(CONFIG.get("hierarchy", {}).get("senior_admin_ids", [1291370925303795733]))
+HIGHER_ADMIN_IDS = OWNER_IDS | SENIOR_ADMIN_IDS | {1398717669607473254, 1291370925303795733}
 AUTHORIZED_GUILDS = {int(k): v for k, v in CONFIG.get("authorized_guilds", {}).items()}
 UNAUTHORIZED_MESSAGE = CONFIG.get(
     "unauthorized_message",

@@ -29,6 +29,7 @@ from config import (
     MUTE_MIN_VALID_SECONDS,
     BAN_MIN_VALID_SECONDS,
     SPOT_CHECK_PROBABILITY,
+    HIGHER_ADMIN_IDS,
 )
 from core.permissions import (
     is_authorized_guild,
@@ -37,6 +38,7 @@ from core.permissions import (
     can_schedule_attestation,
     can_unblock_attestation,
     is_senior_admin,
+    is_higher_admin,
     is_bot_owner,
     get_member_staff_rank,
     get_member_daily_norm_seconds,
@@ -371,6 +373,10 @@ class PromoteConfirmView(discord.ui.View):
 
     @discord.ui.button(label="✅ Подтвердить повышение", style=discord.ButtonStyle.success)
     async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.target.id in HIGHER_ADMIN_IDS or is_higher_admin(self.target.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Изменение должности Высшей Администрации сервера невозможно.", ephemeral=True)
+            return
+
         old_role_id, old_rank_name = STAFF_HIERARCHY[self.current_idx]
         new_role_id, new_rank_name = STAFF_HIERARCHY[self.new_idx]
         old_lp_group = ROLE_ID_TO_MC_GROUP.get(old_role_id, "intern")
@@ -629,6 +635,10 @@ class DemoteConfirmView(discord.ui.View):
 
     @discord.ui.button(label="⚠️ Подтвердить понижение", style=discord.ButtonStyle.danger)
     async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.target.id in HIGHER_ADMIN_IDS or is_higher_admin(self.target.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Действие заблокировано: понижение Высшей Администрации невозможно.", ephemeral=True)
+            return
+
         old_role_id, old_rank_name = STAFF_HIERARCHY[self.current_idx]
         new_role_id, new_rank_name = STAFF_HIERARCHY[self.new_idx]
         old_lp_group = ROLE_ID_TO_MC_GROUP.get(old_role_id, "intern")
@@ -741,6 +751,10 @@ class FireReasonModal(discord.ui.Modal, title="❌ Снятие сотрудни
         self.mc_nick = mc_nick
 
     async def on_submit(self, interaction: discord.Interaction):
+        if self.target.id in HIGHER_ADMIN_IDS or is_higher_admin(self.target.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Действие заблокировано: снятие Высшей Администрации сервера абсолютно невозможно.", ephemeral=True)
+            return
+
         reason_text = self.reason.value.strip()
 
         view = FireConfirmView(
@@ -799,6 +813,10 @@ class FireConfirmView(discord.ui.View):
 
     @discord.ui.button(label="🔴 Снять с должности", style=discord.ButtonStyle.danger)
     async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.target.id in HIGHER_ADMIN_IDS or is_higher_admin(self.target.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Действие заблокировано: снятие Высшей Администрации сервера абсолютно невозможно.", ephemeral=True)
+            return
+
         guild = interaction.guild
         roles_to_strip = [
             r for r in self.target.roles
@@ -1060,6 +1078,10 @@ class AnnulReasonModal(discord.ui.Modal, title="📝 Причина списан
         self.payload = payload
 
     async def on_submit(self, interaction: discord.Interaction):
+        if self.target.id in HIGHER_ADMIN_IDS or is_higher_admin(self.target.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Действие заблокировано: снятие Высшей Администрации сервера абсолютно невозможно.", ephemeral=True)
+            return
+
         reason_text = self.reason.value.strip()
 
         view = AnnulConfirmView(
@@ -1270,6 +1292,9 @@ class CuratorStaffControlView(discord.ui.View):
         self.mc_nick = mc_nick
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.target.id in HIGHER_ADMIN_IDS or is_higher_admin(self.target.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Взаимодействие и снятие Высшей Администрации сервера абсолютно невозможны.", ephemeral=True)
+            return False
         if interaction.user.id != self.invoker.id and not is_senior_admin(interaction.user.id, interaction.guild.id):
             await interaction.response.send_message("❌ Только куратор, открывший профиль, или Владелец может использовать эту панель.", ephemeral=True)
             return False
@@ -1277,6 +1302,10 @@ class CuratorStaffControlView(discord.ui.View):
 
     @discord.ui.button(label="⬆️ Повысить", style=discord.ButtonStyle.success)
     async def promote_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.target.id in HIGHER_ADMIN_IDS or is_higher_admin(self.target.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Взаимодействие с Высшей Администрацией невозможно.", ephemeral=True)
+            return
+
         ceiling_idx = get_invoker_allowed_promotion_ceiling_idx(interaction.user)
 
         # Check ceiling limit
@@ -1326,6 +1355,10 @@ class CuratorStaffControlView(discord.ui.View):
 
     @discord.ui.button(label="⬇️ Понизить", style=discord.ButtonStyle.secondary)
     async def demote_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.target.id in HIGHER_ADMIN_IDS or is_higher_admin(self.target.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Понижение Высшей Администрации невозможно.", ephemeral=True)
+            return
+
         if self.target_idx >= len(STAFF_HIERARCHY) - 1:
             await interaction.response.send_message(
                 "❌ Сотрудник занимает начальную должность (**Стажер**). Для полного снятия используйте кнопку «Снять с должности».",
@@ -1360,6 +1393,10 @@ class CuratorStaffControlView(discord.ui.View):
 
     @discord.ui.button(label="❌ Снять с должности", style=discord.ButtonStyle.danger)
     async def fire_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.target.id in HIGHER_ADMIN_IDS or is_higher_admin(self.target.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Снятие Высшей Администрации сервера абсолютно невозможно.", ephemeral=True)
+            return
+
         modal = FireReasonModal(
             bot=self.bot,
             cog=self.cog,
@@ -1372,6 +1409,10 @@ class CuratorStaffControlView(discord.ui.View):
 
     @discord.ui.button(label="⚖️ Аннулировать наказание", style=discord.ButtonStyle.primary)
     async def deduct_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.target.id in HIGHER_ADMIN_IDS or is_higher_admin(self.target.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Взаимодействие с Высшей Администрацией невозможно.", ephemeral=True)
+            return
+
         stats = await db.get_staff_stats(interaction.guild_id, self.target.id, fallback_nicks=[self.mc_nick])
         bans_cnt = int(stats.get("bans_issued") or 0) if stats else 0
         mutes_cnt = int(stats.get("mutes_issued") or 0) if stats else 0
@@ -1990,16 +2031,29 @@ class StaffCog(commands.Cog, name="Staff"):
         rank_name, max_warns, _, target_idx = get_member_staff_rank(target)
         role_norm_seconds = get_member_daily_norm_seconds(target)
 
-        mc_group = (stats.get("primary_group") or "").lower() if stats else ""
-        if not target.bot and mc_group in MC_GROUP_TO_RANK:
-            mc_rank_name, mc_role_id = MC_GROUP_TO_RANK[mc_group]
-            rank_name = mc_rank_name
-            max_warns = TRAINEE_MAX_WARNS if mc_role_id == TRAINEE_ROLE_ID else DEFAULT_STAFF_MAX_WARNS
-            role_norm_seconds = int(STAFF_ROLE_DAILY_NORM_HOURS.get(mc_role_id, 3.0) * 3600)
-            target_idx = 7 if mc_role_id == TRAINEE_ROLE_ID else 5
+        # Higher Admin unconditional enforcement (regardless of MC link or donate/other roles)
+        if target.id in HIGHER_ADMIN_IDS or is_higher_admin(target.id, interaction.guild.id):
+            if is_bot_owner(target.id, interaction.guild.id):
+                rank_name = "Владелец"
+                target_idx = -2
+            else:
+                rank_name = "Высшая Администрация"
+                target_idx = -1
+            max_warns = DEFAULT_STAFF_MAX_WARNS
+            is_staff = True
+            is_trainee = False
+        else:
+            mc_group = (stats.get("primary_group") or "").lower() if stats else ""
+            if not target.bot and mc_group in MC_GROUP_TO_RANK:
+                mc_rank_name, mc_role_id = MC_GROUP_TO_RANK[mc_group]
+                rank_name = mc_rank_name
+                max_warns = TRAINEE_MAX_WARNS if mc_role_id == TRAINEE_ROLE_ID else DEFAULT_STAFF_MAX_WARNS
+                role_norm_seconds = int(STAFF_ROLE_DAILY_NORM_HOURS.get(mc_role_id, 3.0) * 3600)
+                target_idx = 7 if mc_role_id == TRAINEE_ROLE_ID else 5
 
-        is_staff = (not target.bot) and (rank_name != "Участник") and (target_idx < 100)
-        is_trainee = is_staff and ((rank_name == "Стажер") or (target_idx == 7) or (max_warns == TRAINEE_MAX_WARNS))
+            is_staff = (not target.bot) and (rank_name != "Участник") and (target_idx < 100)
+            is_trainee = is_staff and ((rank_name == "Стажер") or (target_idx == 7) or (max_warns == TRAINEE_MAX_WARNS))
+
         active_warns = await db.get_active_warn_count(interaction.guild.id, target.id) if is_staff else 0
 
         # Calculate days in staff (for staff) or days on server (for regular players)
@@ -2059,100 +2113,105 @@ class StaffCog(commands.Cog, name="Staff"):
         attestation_banner_embed = None
 
         if target.id != interaction.user.id and (has_warn_access(interaction.user) or is_senior_admin(interaction.user.id, interaction.guild.id)):
-            _, _, _, caller_idx = get_member_staff_rank(interaction.user)
+            # Higher Administration is totally immune: interactions and removals are strictly impossible
+            if target.id in HIGHER_ADMIN_IDS or is_higher_admin(target.id, interaction.guild.id):
+                control_view = None
+                attestation_banner_embed = None
+            else:
+                _, _, _, caller_idx = get_member_staff_rank(interaction.user)
 
-            # A. Check if target has an active pending attestation
-            active_att = await db.get_active_attestation(interaction.guild.id, target.id)
+                # A. Check if target has an active pending attestation
+                active_att = await db.get_active_attestation(interaction.guild.id, target.id)
 
-            # B. Check if target is blacklisted from attestations (3-Strike Rule)
-            history = await db.get_candidate_history(interaction.guild.id, target.id)
-            is_blacklisted = False
-            bl_str = ""
-            if history and history.get("is_blacklisted"):
-                bl_until_iso = history.get("blacklisted_until")
-                if bl_until_iso:
-                    try:
-                        bl_dt = datetime.fromisoformat(bl_until_iso)
-                        if bl_dt.tzinfo is None:
-                            bl_dt = bl_dt.replace(tzinfo=timezone.utc)
-                        if bl_dt > datetime.now(timezone.utc):
+                # B. Check if target is blacklisted from attestations (3-Strike Rule)
+                history = await db.get_candidate_history(interaction.guild.id, target.id)
+                is_blacklisted = False
+                bl_str = ""
+                if history and history.get("is_blacklisted"):
+                    bl_until_iso = history.get("blacklisted_until")
+                    if bl_until_iso:
+                        try:
+                            bl_dt = datetime.fromisoformat(bl_until_iso)
+                            if bl_dt.tzinfo is None:
+                                bl_dt = bl_dt.replace(tzinfo=timezone.utc)
+                            if bl_dt > datetime.now(timezone.utc):
+                                is_blacklisted = True
+                                from utils.time_parser import format_msk
+                                bl_str = format_msk(bl_dt)
+                        except Exception:
                             is_blacklisted = True
-                            from utils.time_parser import format_msk
-                            bl_str = format_msk(bl_dt)
+                            bl_str = str(bl_until_iso)
+
+                if active_att:
+                    from cogs.attestation import AttestationVerdictView
+                    from utils.time_parser import format_msk, to_discord_timestamp
+                    control_view = AttestationVerdictView(
+                        bot=self.bot,
+                        cog=self,
+                        invoker=interaction.user,
+                        candidate=target,
+                        attestation=active_att,
+                        mc_nick=display_nick,
+                    )
+                    try:
+                        sch_dt = datetime.fromisoformat(active_att["scheduled_at"])
+                        if sch_dt.tzinfo is None:
+                            sch_dt = sch_dt.replace(tzinfo=timezone.utc)
+                        sch_text = f"`{format_msk(sch_dt)}` ({to_discord_timestamp(sch_dt, 'R')})"
                     except Exception:
-                        is_blacklisted = True
-                        bl_str = str(bl_until_iso)
+                        sch_text = f"`{active_att['scheduled_at']}`"
 
-            if active_att:
-                from cogs.attestation import AttestationVerdictView
-                from utils.time_parser import format_msk, to_discord_timestamp
-                control_view = AttestationVerdictView(
-                    bot=self.bot,
-                    cog=self,
-                    invoker=interaction.user,
-                    candidate=target,
-                    attestation=active_att,
-                    mc_nick=display_nick,
-                )
-                try:
-                    sch_dt = datetime.fromisoformat(active_att["scheduled_at"])
-                    if sch_dt.tzinfo is None:
-                        sch_dt = sch_dt.replace(tzinfo=timezone.utc)
-                    sch_text = f"`{format_msk(sch_dt)}` ({to_discord_timestamp(sch_dt, 'R')})"
-                except Exception:
-                    sch_text = f"`{active_att['scheduled_at']}`"
-
-                attestation_banner_embed = create_design_embed(
-                    title="🎓 НАЗНАЧЕНА АКТИВНАЯ АТТЕСТАЦИЯ",
-                    description=(
-                        f"👤 **Кандидат:** {target.mention} (`{display_nick}`)\n"
-                        f"🏷️ **Должность:** **{active_att['target_role_name']}**\n"
-                        f"🎙️ **Канал:** <#{active_att['voice_channel_id']}>\n"
-                        f"⏱️ **Время:** {sch_text}\n"
-                        f"🛡️ **Назначил:** <@{active_att['curator_id']}>\n\n"
-                        f"Используйте кнопки ниже для вынесения вердикта по результатам собеседования:"
-                    ),
-                    color=COLOR_FLORY_ORANGE,
-                )
-            elif is_blacklisted:
-                from cogs.attestation import AttestationUnblockView
-                if can_unblock_attestation(interaction.user):
-                    control_view = AttestationUnblockView(bot=self.bot, candidate=target)
-                attestation_banner_embed = create_design_embed(
-                    title="🚫 КАНДИДАТ В ЧЕРНОМ СПИСКЕ АТТЕСТАЦИЙ",
-                    description=(
-                        f"Участник {target.mention} получил **3 неудачные попытки подряд** и заблокирован для аттестаций.\n\n"
-                        f"⏳ **Срок окончания ЧС:** `{bl_str}`\n"
-                        f"👑 Досрочное снятие блокировки доступно только Высшей Администрации сервера."
-                    ),
-                    color=COLOR_DANGER,
-                )
-            elif not is_staff:
-                # Regular user (Ticket King candidate) -> Show [ 📝 Назначить аттестацию ]
-                from cogs.attestation import CandidateAttestationStartView
-                eligible_ranks = [
-                    (idx, r_id, r_name)
-                    for idx, (r_id, r_name) in enumerate(STAFF_HIERARCHY)
-                    if 3 <= idx <= 7
-                ]
-                control_view = CandidateAttestationStartView(
-                    bot=self.bot,
-                    invoker=interaction.user,
-                    candidate=target,
-                    mc_nick=display_nick,
-                    eligible_ranks=eligible_ranks,
-                )
-            elif caller_idx < target_idx and is_staff:
-                # Friendly-fire shield: caller must be strictly higher in rank
-                control_view = CuratorStaffControlView(
-                    bot=self.bot,
-                    cog=self,
-                    invoker=interaction.user,
-                    target=target,
-                    target_rank_name=rank_name,
-                    target_idx=target_idx,
-                    mc_nick=display_nick,
-                )
+                    attestation_banner_embed = create_design_embed(
+                        title="🎓 НАЗНАЧЕНА АКТИВНАЯ АТТЕСТАЦИЯ",
+                        description=(
+                            f"👤 **Кандидат:** {target.mention} (`{display_nick}`)\n"
+                            f"🏷️ **Должность:** **{active_att['target_role_name']}**\n"
+                            f"🎙️ **Канал:** <#{active_att['voice_channel_id']}>\n"
+                            f"⏱️ **Время:** {sch_text}\n"
+                            f"🛡️ **Назначил:** <@{active_att['curator_id']}>\n\n"
+                            f"Используйте кнопки ниже для вынесения вердикта по результатам собеседования:"
+                        ),
+                        color=COLOR_FLORY_ORANGE,
+                    )
+                elif is_blacklisted:
+                    from cogs.attestation import AttestationUnblockView
+                    if can_unblock_attestation(interaction.user):
+                        control_view = AttestationUnblockView(bot=self.bot, candidate=target)
+                    attestation_banner_embed = create_design_embed(
+                        title="🚫 КАНДИДАТ В ЧЕРНОМ СПИСКЕ АТТЕСТАЦИЙ",
+                        description=(
+                            f"Участник {target.mention} получил **3 неудачные попытки подряд** и заблокирован для аттестаций.\n\n"
+                            f"⏳ **Срок окончания ЧС:** `{bl_str}`\n"
+                            f"👑 Досрочное снятие блокировки доступно только Высшей Администрации сервера."
+                        ),
+                        color=COLOR_DANGER,
+                    )
+                elif not is_staff:
+                    # Regular user (Ticket King candidate) -> Show [ 📝 Назначить аттестацию ]
+                    from cogs.attestation import CandidateAttestationStartView
+                    eligible_ranks = [
+                        (idx, r_id, r_name)
+                        for idx, (r_id, r_name) in enumerate(STAFF_HIERARCHY)
+                        if 3 <= idx <= 7
+                    ]
+                    control_view = CandidateAttestationStartView(
+                        bot=self.bot,
+                        invoker=interaction.user,
+                        candidate=target,
+                        mc_nick=display_nick,
+                        eligible_ranks=eligible_ranks,
+                    )
+                elif caller_idx < target_idx and is_staff:
+                    # Friendly-fire shield: caller must be strictly higher in rank
+                    control_view = CuratorStaffControlView(
+                        bot=self.bot,
+                        cog=self,
+                        invoker=interaction.user,
+                        target=target,
+                        target_rank_name=rank_name,
+                        target_idx=target_idx,
+                        mc_nick=display_nick,
+                    )
 
         # 5. Render profile card in background thread
         try:

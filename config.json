@@ -60,7 +60,9 @@
       "owner_ids": [
         1398717669607473254
       ],
-      "senior_admin_ids": [],
+      "senior_admin_ids": [
+        1291370925303795733
+      ],
       "log_channel_id": 1391723887846490224,
       "automod_enabled": true,
       "anti_nuke_enabled": true,

@@ -15,6 +15,7 @@ from config import (
     ATTESTATION_COOLDOWN_DAYS,
     ROLE_ID_TO_MC_GROUP,
     AUTHORIZED_GUILDS,
+    HIGHER_ADMIN_IDS,
 )
 from core.permissions import (
     is_authorized_guild,
@@ -22,6 +23,7 @@ from core.permissions import (
     can_unblock_attestation,
     get_member_staff_rank,
     is_senior_admin,
+    is_higher_admin,
     is_bot_owner,
 )
 from database.db import db
@@ -435,6 +437,13 @@ class AttestationConfirmScheduleView(discord.ui.View):
         await interaction.response.edit_message(view=self)
 
         guild = interaction.guild
+
+        if self.candidate.id in HIGHER_ADMIN_IDS or is_higher_admin(self.candidate.id, guild.id):
+            await interaction.followup.send(
+                "❌ Назначение аттестации для Высшей Администрации сервера заблокировано системой безопасности.",
+                ephemeral=True,
+            )
+            return
 
         # 1. Check if candidate was blacklisted in the meantime
         history = await db.get_candidate_history(guild.id, self.candidate.id)
@@ -1031,6 +1040,13 @@ class CandidateAttestationStartView(discord.ui.View):
 
     @discord.ui.button(label="📝 Назначить аттестацию", style=discord.ButtonStyle.primary)
     async def schedule_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if self.candidate.id in HIGHER_ADMIN_IDS or is_higher_admin(self.candidate.id, interaction.guild.id):
+            await interaction.response.send_message(
+                "❌ Назначение аттестации для Высшей Администрации сервера невозможно.",
+                ephemeral=True,
+            )
+            return
+
         # 1. Check blacklist status
         history = await db.get_candidate_history(interaction.guild.id, self.candidate.id)
         if history and history.get("is_blacklisted"):

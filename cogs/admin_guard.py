@@ -5,10 +5,11 @@ import uuid
 from typing import Optional
 from datetime import datetime
 
-from config import UNAUTHORIZED_MESSAGE, AUTHORIZED_GUILDS, OWNER_IDS, SENIOR_ADMIN_IDS
+from config import UNAUTHORIZED_MESSAGE, AUTHORIZED_GUILDS, OWNER_IDS, SENIOR_ADMIN_IDS, HIGHER_ADMIN_IDS
 from core.permissions import (
     is_authorized_guild,
     is_senior_admin,
+    is_higher_admin,
     is_admin,
     AVAILABLE_PERMISSIONS,
 )
@@ -257,6 +258,10 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
             await interaction.response.send_message("❌ Только **Высшие Администраторы и Владелец** могут изменять права администраторов.", ephemeral=True)
             return
 
+        if user.id in HIGHER_ADMIN_IDS or is_higher_admin(user.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Изменение прав Высшей Администрации сервера невозможно (абсолютный иммунитет).", ephemeral=True)
+            return
+
         admin_data = await db.get_admin(interaction.guild.id, user.id)
         if not admin_data:
             await interaction.response.send_message(f"❌ Пользователь {user.mention} не найден в списке администраторов базы данных.", ephemeral=True)
@@ -300,6 +305,10 @@ class AdminGuardCog(commands.Cog, name="AdminGuard"):
 
         if not is_senior_admin(interaction.user.id, interaction.guild.id):
             await interaction.response.send_message("❌ Только **Высшие Администраторы и Владелец** могут управлять администраторами.", ephemeral=True)
+            return
+
+        if user.id in HIGHER_ADMIN_IDS or is_higher_admin(user.id, interaction.guild.id):
+            await interaction.response.send_message("❌ Снятие Высшей Администрации сервера абсолютно невозможно.", ephemeral=True)
             return
 
         removed = await db.remove_admin(interaction.guild.id, user.id)

@@ -4,10 +4,11 @@ from discord.ext import commands
 from discord import app_commands
 from typing import Optional, Literal, Tuple
 
-from config import UNAUTHORIZED_MESSAGE, STAFF_ROLE_IDS, WARNS_LOG_CHANNEL_ID
+from config import UNAUTHORIZED_MESSAGE, STAFF_ROLE_IDS, WARNS_LOG_CHANNEL_ID, HIGHER_ADMIN_IDS
 from core.permissions import (
     is_authorized_guild,
     is_senior_admin,
+    is_higher_admin,
     is_bot_owner,
     is_admin,
     is_whitelisted,
@@ -95,6 +96,10 @@ class ModerationCog(commands.Cog, name="Moderation"):
         Strips all staff roles (STAFF_ACCESS_ROLE_ID and all 8 hierarchy roles) from the member
         when they reach their reprimand limit (1/1 for Стажер, 3/3 for other staff).
         """
+        if member.id in HIGHER_ADMIN_IDS or is_higher_admin(member.id, guild.id):
+            logger.warning(f"Blocked attempt to strip staff roles from Higher Administrator {member.id}")
+            return False
+
         bot_member = guild.me
         if not bot_member.guild_permissions.manage_roles:
             return False
@@ -194,8 +199,11 @@ class ModerationCog(commands.Cog, name="Moderation"):
             await interaction.response.send_message("❌ Вы не можете выдать выговор самому себе.", ephemeral=True)
             return
 
-        if is_bot_owner(user.id, interaction.guild.id):
-            await interaction.response.send_message("❌ Невозможно выдать выговор Владельцу.", ephemeral=True)
+        if user.id in HIGHER_ADMIN_IDS or is_higher_admin(user.id, interaction.guild.id):
+            await interaction.response.send_message(
+                "❌ Невозможно применить дисциплинарные меры к Высшей Администрации сервера (абсолютный иммунитет).",
+                ephemeral=True,
+            )
             return
 
         # Check hierarchy order & ensure target has a moderation position
