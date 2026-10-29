@@ -161,7 +161,13 @@ class Database:
                     proof_comment TEXT DEFAULT '',
                     proof_submitted_at TIMESTAMP,
                     proof_requested_by INTEGER DEFAULT 0,
-                    proof_requested_at TIMESTAMP
+                    proof_requested_at TIMESTAMP,
+                    proof_status TEXT DEFAULT 'NONE',
+                    proof_materials TEXT DEFAULT '[]',
+                    proof_curator_msg_id INTEGER DEFAULT 0,
+                    proof_curator_channel_id INTEGER DEFAULT 0,
+                    proof_reviewed_by INTEGER DEFAULT 0,
+                    proof_reviewed_at TIMESTAMP
                 );
             """)
 
@@ -172,6 +178,12 @@ class Database:
                 "proof_submitted_at TIMESTAMP",
                 "proof_requested_by INTEGER DEFAULT 0",
                 "proof_requested_at TIMESTAMP",
+                "proof_status TEXT DEFAULT 'NONE'",
+                "proof_materials TEXT DEFAULT '[]'",
+                "proof_curator_msg_id INTEGER DEFAULT 0",
+                "proof_curator_channel_id INTEGER DEFAULT 0",
+                "proof_reviewed_by INTEGER DEFAULT 0",
+                "proof_reviewed_at TIMESTAMP",
             ):
                 try:
                     await db.execute(f"ALTER TABLE punishment_logs ADD COLUMN {col_sql}")
@@ -780,7 +792,11 @@ class Database:
             await db.execute(
                 """
                 UPDATE punishment_logs
-                SET audit_requested = 1, proof_requested_by = ?, proof_requested_at = ?
+                SET audit_requested = 1,
+                    proof_requested_by = ?,
+                    proof_requested_at = ?,
+                    proof_status = 'PENDING_MOD',
+                    proof_materials = '[]'
                 WHERE id = ? AND guild_id = ?
                 """,
                 (requested_by, now, punishment_id, guild_id),
@@ -788,21 +804,173 @@ class Database:
             await db.commit()
             return True
 
+    async def append_punishment_proof_material(
+        self, punishment_id: int, guild_id: int, text: str = "", attachments: Optional[List[str]] = None
+    ) -> bool:
+        """Appends a new message/attachment entry to the punishment's proof_materials JSON array."""
+        now = datetime.now(timezone.utc).isoformat()
+        entry = {
+            "text": text.strip(),
+            "attachments": attachments or [],
+            "timestamp": now,
+        }
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT proof_materials FROM punishment_logs WHERE id = ? AND guild_id = ?",
+                (punishment_id, guild_id),
+            ) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return False
+                try:
+                    materials = json.loads(row["proof_materials"] or "[]")
+                    if not isinstance(materials, list):
+                        materials = []
+                except Exception:
+                    materials = []
+            materials.append(entry)
+            await db.execute(
+                "UPDATE punishment_logs SET proof_materials = ? WHERE id = ? AND guild_id = ?",
+                (json.dumps(materials, ensure_ascii=False), punishment_id, guild_id),
+            )
+            await db.commit()
+            return True
+
     async def submit_punishment_proof(
-        self, punishment_id: int, guild_id: int, proof_url: str, comment: str = ""
+        self,
+        punishment_id: int,
+        guild_id: int,
+        proof_url: str = "",
+        comment: str = "",
+        curator_msg_id: int = 0,
+        curator_channel_id: int = 0,
     ) -> bool:
         now = datetime.now(timezone.utc).isoformat()
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
                 UPDATE punishment_logs
-                SET proof_url = ?, proof_comment = ?, proof_submitted_at = ?
+                SET proof_url = CASE WHEN ? != '' THEN ? ELSE proof_url END,
+                    proof_comment = CASE WHEN ? != '' THEN ? ELSE proof_comment END,
+                    proof_submitted_at = ?,
+                    proof_status = 'PENDING_CURATOR',
+                    proof_curator_msg_id = CASE WHEN ? > 0 THEN ? ELSE proof_curator_msg_id END,
+                    proof_curator_channel_id = CASE WHEN ? > 0 THEN ? ELSE proof_curator_channel_id END
                 WHERE id = ? AND guild_id = ?
                 """,
-                (proof_url, comment, now, punishment_id, guild_id),
+                (
+                    proof_url, proof_url,
+                    comment, comment,
+                    now,
+                    curator_msg_id, curator_msg_id,
+                    curator_channel_id, curator_channel_id,
+                    punishment_id, guild_id,
+                ),
             )
             await db.commit()
             return True
+
+    async def resolve_punishment_proof(
+        self, punishment_id: int, guild_id: int, status: str, reviewed_by: int = 0
+    ) -> bool:
+        """Resolves the proof request with a verdict (APPROVED, REJECTED, EXPIRED_NO_PROOF, EXPIRED_AUTO_APPROVED)."""
+        now = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                UPDATE punishment_logs
+                SET proof_status = ?, proof_reviewed_by = ?, proof_reviewed_at = ?
+                WHERE id = ? AND guild_id = ?
+                """,
+                (status, reviewed_by, now, punishment_id, guild_id),
+            )
+            await db.commit()
+            return True
+
+    async def get_active_mod_proof_request(
+        self, user_id: int, mc_nick: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Find the latest active punishment proof request waiting for materials from this moderator."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            if user_id:
+                async with db.execute(
+                    """
+                    SELECT * FROM punishment_logs
+                    WHERE proof_status = 'PENDING_MOD' AND moderator_id = ?
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (user_id,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        return dict(row)
+
+            if mc_nick:
+                async with db.execute(
+                    """
+                    SELECT * FROM punishment_logs
+                    WHERE proof_status = 'PENDING_MOD' AND LOWER(moderator_nick) = LOWER(?)
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (mc_nick.strip(),),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        return dict(row)
+
+            # Try linked minecraft_nick from staff_stats
+            if user_id:
+                async with db.execute(
+                    "SELECT minecraft_nick FROM staff_stats WHERE user_id = ? LIMIT 1",
+                    (user_id,),
+                ) as cursor:
+                    s_row = await cursor.fetchone()
+                    if s_row and s_row["minecraft_nick"]:
+                        linked_nick = s_row["minecraft_nick"]
+                        async with db.execute(
+                            """
+                            SELECT * FROM punishment_logs
+                            WHERE proof_status = 'PENDING_MOD' AND LOWER(moderator_nick) = LOWER(?)
+                            ORDER BY id DESC LIMIT 1
+                            """,
+                            (linked_nick.strip(),),
+                        ) as p_cursor:
+                            row = await p_cursor.fetchone()
+                            if row:
+                                return dict(row)
+            return None
+
+    async def get_expired_pending_mod_proofs(self, timeout_seconds: int = 86400) -> List[Dict[str, Any]]:
+        """Punishments where moderator failed to submit proof within timeout (24 hours)."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT * FROM punishment_logs
+                WHERE proof_status = 'PENDING_MOD' AND proof_requested_at IS NOT NULL AND proof_requested_at <= ?
+                """,
+                (cutoff,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+    async def get_expired_pending_curator_proofs(self, timeout_seconds: int = 86400) -> List[Dict[str, Any]]:
+        """Punishments where curator failed to review submitted proof within timeout (24 hours)."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT * FROM punishment_logs
+                WHERE proof_status = 'PENDING_CURATOR' AND proof_submitted_at IS NOT NULL AND proof_submitted_at <= ?
+                """,
+                (cutoff,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
 
     # --- ATTESTATIONS & INTERVIEWS ---
     async def create_attestation(

@@ -2,8 +2,9 @@ import asyncio
 import re
 import json
 import random
+import zoneinfo
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -50,6 +51,7 @@ from database.db import db
 from utils.staff_card import generate_staff_profile_card
 from utils.embeds import (
     create_security_embed,
+    staff_warn_dm_embed,
     COLOR_FLORY_ORANGE,
     COLOR_SUCCESS,
     COLOR_WARNING,
@@ -1593,7 +1595,7 @@ class PunishmentProofRequestView(discord.ui.View):
 
 
 class PunishmentProofSubmitView(discord.ui.View):
-    """View shown after proof has been requested with a button to submit proof."""
+    """View shown after proof has been requested with a button to submit proof via modal."""
     def __init__(self, punish_id: int):
         super().__init__(timeout=None)
         self.add_item(
@@ -1626,6 +1628,179 @@ class PunishmentProofDoneView(discord.ui.View):
                     disabled=True,
                 )
             )
+
+
+class SendProofConfirmView(discord.ui.View):
+    """View shown in DM to moderator after sending proof files/text."""
+    def __init__(self, punish_id: int):
+        super().__init__(timeout=None)
+        self.add_item(
+            discord.ui.Button(
+                label="🚀 Отправить все материалы",
+                style=discord.ButtonStyle.success,
+                custom_id=f"flory_finish_proof:{punish_id}",
+            )
+        )
+        self.add_item(
+            discord.ui.Button(
+                label="➕ Добавить еще материалы",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"flory_add_more:{punish_id}",
+            )
+        )
+
+
+class CuratorProofReviewView(discord.ui.View):
+    """View shown to Curator in DM and #curators-audit with Accept/Reject buttons."""
+    def __init__(self, punish_id: int):
+        super().__init__(timeout=None)
+        self.add_item(
+            discord.ui.Button(
+                label="✅ Наказание верно",
+                style=discord.ButtonStyle.success,
+                custom_id=f"flory_proof_valid:{punish_id}",
+            )
+        )
+        self.add_item(
+            discord.ui.Button(
+                label="❌ Наказание не верно",
+                style=discord.ButtonStyle.danger,
+                custom_id=f"flory_proof_invalid:{punish_id}",
+            )
+        )
+
+
+def format_proof_materials_summary(
+    materials: List[Dict[str, Any]], fallback_url: str = "", fallback_comment: str = ""
+) -> str:
+    """Formats list of proof materials (links, text, attachments) into a readable markdown block."""
+    lines = []
+    if fallback_url:
+        lines.append(f"🔗 **Ссылка:** {fallback_url}")
+    if fallback_comment:
+        lines.append(f"💬 **Комментарий:** {fallback_comment}")
+
+    if materials:
+        lines.append("📥 **Материалы из переписки с ботом:**")
+        for i, m in enumerate(materials, 1):
+            txt = (m.get("text") or "").strip()
+            atts = m.get("attachments") or []
+            ts = m.get("timestamp") or ""
+            time_str = ""
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(ts).astimezone(zoneinfo.ZoneInfo("Europe/Moscow"))
+                    time_str = f" *({dt.strftime('%H:%M:%S')})*"
+                except Exception:
+                    pass
+
+            entry_parts = []
+            if txt:
+                entry_parts.append(f"• **Сообщение #{i}:** {txt}")
+            if atts:
+                att_links = ", ".join(f"[Файл {idx}]({url})" for idx, url in enumerate(atts, 1))
+                entry_parts.append(f"• **Вложения #{i}:** {att_links}")
+
+            if entry_parts:
+                lines.append("\n".join(entry_parts) + time_str)
+
+    if not lines:
+        return "*Материалы еще не предоставлены.*"
+    return "\n".join(lines)
+
+
+async def issue_staff_system_warn(
+    bot: commands.Bot,
+    guild: discord.Guild,
+    user_id: int,
+    reason: str,
+    situation: str,
+    issued_by_id: int = 0,
+    punish_id: Optional[int] = None,
+) -> Tuple[int, int, bool]:
+    """
+    Issues a staff reprimand/warn, enforces rank limits (1/1 for Стажер, 3/3 for other staff),
+    strips roles if limit reached, sends DM to the warned staff member, and logs to CURATORS_AUDIT_CHANNEL_ID.
+    Returns (warn_id, warn_count, demoted).
+    """
+    if user_id in HIGHER_ADMIN_IDS or is_higher_admin(user_id, guild.id):
+        logger.warning(f"Immunity blocked attempt to issue reprimand to Higher Admin {user_id}")
+        return (0, 0, False)
+
+    warn_id, warn_count = await db.add_warning(
+        guild_id=guild.id,
+        user_id=user_id,
+        moderator_id=issued_by_id or (bot.user.id if bot.user else 0),
+        reason=reason,
+        expiry_seconds=15 * 86400,
+        situation=situation,
+        duration_text="15d",
+    )
+
+    member = guild.get_member(user_id)
+    demoted = False
+    max_warns = 3
+    is_trainee = False
+
+    if member:
+        rank_name, max_warns, is_trainee, _ = get_member_staff_rank(member)
+        if warn_count >= max_warns:
+            demote_reason = (
+                f"FloryGuard Staff: Снятие со стажера (выговор {warn_count}/{max_warns}: {reason})"
+                if is_trainee
+                else f"FloryGuard Staff: Достигнут лимит выговоров ({warn_count}/{max_warns}: {reason})"
+            )
+            bot_member = guild.me
+            if bot_member and bot_member.guild_permissions.manage_roles:
+                roles_to_strip = [
+                    r for r in member.roles
+                    if r.id in STAFF_ROLE_IDS and not r.is_default() and not r.managed and r < bot_member.top_role
+                ]
+                if roles_to_strip:
+                    try:
+                        await member.remove_roles(*roles_to_strip, reason=demote_reason)
+                        await db.remove_admin(guild.id, member.id)
+                        await db.log_security_event(guild.id, member.id, "STAFF_WARN_DEMOTE", demote_reason)
+                        demoted = True
+                    except Exception as e:
+                        logger.error(f"Error stripping roles on system warn: {e}")
+
+        # Send DM to warned member
+        try:
+            curator_user = guild.get_member(issued_by_id) if issued_by_id else bot.user
+            dm_embed = staff_warn_dm_embed(
+                guild=guild,
+                moderator=curator_user or bot.user,
+                duration_text="15d",
+                situation=situation,
+                reason=reason,
+                warn_count=warn_count,
+                max_warns=max_warns,
+                demoted=demoted,
+            )
+            await member.send(embed=dm_embed)
+        except Exception as e:
+            logger.debug(f"Could not send warn DM to {user_id}: {e}")
+
+    # Log to #curators-audit (1391723887846490224)
+    audit_desc = (
+        f"👤 **Сотрудник:** <@{user_id}>\n"
+        f"📌 **Причина:** `{reason}`\n"
+        f"📝 **Ситуация:** `{situation}`\n"
+        f"📊 **Выговоров:** `{warn_count}/{max_warns}`\n"
+        f"⚡ **Статус:** {'❌ **СНЯТ СО СТАФФА**' if demoted else '⚠️ Предупрежден'}"
+    )
+    if punish_id:
+        audit_desc += f"\n🆔 **Наказание:** `#{punish_id}`"
+
+    audit_embed = create_security_embed(
+        title="⚠️ СИСТЕМНЫЙ ВЫГОВОР СОТРУДНИКУ",
+        description=audit_desc,
+        color=COLOR_DANGER if demoted else COLOR_WARNING,
+    )
+    await bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+
+    return (warn_id, warn_count, demoted)
 
 
 class SubmitProofModal(discord.ui.Modal, title="📎 Предоставление доказательств"):
@@ -1668,7 +1843,13 @@ class SubmitProofModal(discord.ui.Modal, title="📎 Предоставлени�
         guild = interaction.guild or (self.bot.guilds[0] if self.bot.guilds else None)
         guild_id = guild.id if guild else int(self.punishment.get("guild_id", 0))
 
-        await db.submit_punishment_proof(self.punish_id, guild_id, proof_url, comment)
+        # Append to materials
+        await db.append_punishment_proof_material(
+            self.punish_id, guild_id, text=comment, attachments=[proof_url]
+        )
+        await db.submit_punishment_proof(
+            self.punish_id, guild_id, proof_url=proof_url, comment=comment
+        )
 
         # Update original message if interaction occurred in guild channel
         try:
@@ -1686,23 +1867,67 @@ class SubmitProofModal(discord.ui.Modal, title="📎 Предоставлени�
         except Exception as e:
             logger.warning(f"Could not edit message with proof: {e}")
 
+        # Forward to requester / curator
+        requester_id = int(self.punishment.get("proof_requested_by") or 0)
+        target_nick = self.punishment.get("target_nick", "Unknown")
+        mod_nick = self.punishment.get("moderator_nick", "Unknown")
+        mod_id = int(self.punishment.get("moderator_id") or 0)
+        p_type = self.punishment.get("punishment_type", "НАКАЗАНИЕ")
+        reason = self.punishment.get("reason", "Без причины")
+
+        materials = [
+            {"text": comment, "attachments": [proof_url], "timestamp": datetime.now(timezone.utc).isoformat()}
+        ]
+        materials_summary = format_proof_materials_summary(
+            materials, fallback_url=proof_url, fallback_comment=comment
+        )
+
+        curator_embed = create_security_embed(
+            title=f"📥 ПРЕДОСТАВЛЕНЫ ДОКАЗАТЕЛЬСТВА (#{self.punish_id})",
+            description=(
+                f"👤 **От модератора:** `{mod_nick}` ({interaction.user.mention})\n"
+                f"🎯 **Игрок (цель):** `{target_nick}`\n"
+                f"⚡ **Наказание:** `{p_type}` (ID: `#{self.punish_id}`)\n"
+                f"📌 **Причина:** `{reason}`\n\n"
+                f"{materials_summary}\n\n"
+                f"⏳ **Срок на ответ:** 24 часа (при отсутствии ответа наказание подтвердится автоматически)."
+            ),
+            color=COLOR_WARNING,
+        )
+
+        curator_view = CuratorProofReviewView(self.punish_id)
+
+        if requester_id and guild:
+            curator_member = guild.get_member(requester_id)
+            if curator_member:
+                try:
+                    cur_msg = await curator_member.send(embed=curator_embed, view=curator_view)
+                    if cur_msg:
+                        await db.submit_punishment_proof(
+                            self.punish_id,
+                            guild_id,
+                            curator_msg_id=cur_msg.id,
+                            curator_channel_id=cur_msg.channel.id,
+                        )
+                except Exception as e:
+                    logger.warning(f"Could not send proof to curator DM: {e}")
+
         # Post audit embed to Curators channel
         if guild:
-            target_nick = self.punishment.get("target_nick", "Unknown")
-            mod_nick = self.punishment.get("moderator_nick", "Unknown")
-            p_type = self.punishment.get("punishment_type", "НАКАЗАНИЕ")
             audit_embed = create_security_embed(
-                title="✅ ПРЕДОСТАВЛЕНЫ ДОКАЗАТЕЛЬСТВА",
+                title=f"📥 ПРЕДОСТАВЛЕНЫ ДОКАЗАТЕЛЬСТВА (#{self.punish_id})",
                 description=(
                     f"👤 **Модератор:** `{mod_nick}` ({interaction.user.mention})\n"
                     f"🎯 **Игрок:** `{target_nick}`\n"
-                    f"⚡ **Наказание:** `{p_type}`\n"
-                    f"🔗 **Доказательства:** [Смотреть материалы]({proof_url})\n"
-                    f"📝 **Комментарий:** `{comment or 'Отсутствует'}`"
+                    f"⚡ **Наказание:** `{p_type}` (ID: `#{self.punish_id}`)\n"
+                    f"📌 **Причина:** `{reason}`\n"
+                    f"👮 **Запросил:** <@{requester_id}>\n\n"
+                    f"{materials_summary}\n\n"
+                    f"⏳ **Срок на ответ куратору:** 24 часа."
                 ),
-                color=COLOR_SUCCESS,
+                color=COLOR_WARNING,
             )
-            await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+            await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed, view=curator_view)
 
         await interaction.response.send_message(
             f"✅ Доказательства по наказанию `#{self.punish_id}` успешно сохранены и отправлены на проверку.",
@@ -1726,9 +1951,11 @@ class StaffCog(commands.Cog, name="Staff"):
         self.bot = bot
         self._last_digest_week: Optional[str] = None
         self.weekly_digest_task.start()
+        self.proof_timeout_task.start()
 
     def cog_unload(self):
         self.weekly_digest_task.cancel()
+        self.proof_timeout_task.cancel()
 
     async def _check_guild_auth(self, interaction: discord.Interaction) -> bool:
         if not is_authorized_guild(interaction.guild):
@@ -1995,10 +2222,43 @@ class StaffCog(commands.Cog, name="Staff"):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Real-time Cloud Sync listener for FloryModerators packets."""
-        if not message.guild or not message.content:
+        """Real-time Cloud Sync listener for FloryModerators packets & DM proof material collector."""
+        if not message.author or message.author.bot:
             return
-        if message.content.startswith(SYNC_PREFIX):
+
+        # 1. Real-time DM collector for moderator proof materials
+        if message.guild is None:
+            active_req = await db.get_active_mod_proof_request(user_id=message.author.id)
+            if active_req and active_req.get("proof_status") == "PENDING_MOD":
+                punish_id = int(active_req["id"])
+                guild_id = int(active_req.get("guild_id") or 0)
+                text = (message.content or "").strip()
+                attachments = [att.url for att in message.attachments if att.url]
+                if text or attachments:
+                    await db.append_punishment_proof_material(
+                        punishment_id=punish_id,
+                        guild_id=guild_id,
+                        text=text,
+                        attachments=attachments,
+                    )
+                    confirm_embed = create_security_embed(
+                        title=f"📎 Материалы по наказанию #{punish_id} получены",
+                        description=(
+                            "Мы зафиксировали отправленные вами материалы!\n\n"
+                            "❓ **Это все доказательства?**\n"
+                            "• Если **да** — нажмите кнопку **[ 🚀 Отправить все материалы ]** ниже.\n"
+                            "• Если **нет** — просто отправьте еще ссылки, скриншоты или видео в этот чат."
+                        ),
+                        color=COLOR_PRIMARY,
+                    )
+                    await message.channel.send(
+                        embed=confirm_embed,
+                        view=SendProofConfirmView(punish_id=punish_id)
+                    )
+            return
+
+        # 2. Server channels: sync packets
+        if message.content and message.content.startswith(SYNC_PREFIX):
             await self._process_sync_payload(message.content, message.guild.id)
             try:
                 await message.delete()
@@ -2007,7 +2267,7 @@ class StaffCog(commands.Cog, name="Staff"):
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
-        """Dynamic interaction listener for punishment proof request & submission buttons."""
+        """Dynamic interaction listener for punishment proof request, submission, and review buttons."""
         if interaction.type != discord.InteractionType.component:
             return
         if interaction.response.is_done():
@@ -2059,7 +2319,7 @@ class StaffCog(commands.Cog, name="Staff"):
                 new_embed = orig_embed.copy()
                 new_embed.add_field(
                     name="❓ Запрос доказательств",
-                    value=f"Запросил: {interaction.user.mention}\nСтатус: ⏳ Ожидание материалов от модератора",
+                    value=f"Запросил: {interaction.user.mention}\nСтатус: ⏳ Ожидание материалов от модератора (24 ч.)",
                     inline=False,
                 )
                 await msg.edit(embed=new_embed, view=PunishmentProofSubmitView(punish_id))
@@ -2075,6 +2335,7 @@ class StaffCog(commands.Cog, name="Staff"):
             target_nick = punishment.get("target_nick", "Unknown")
             p_type = punishment.get("punishment_type", "НАКАЗАНИЕ")
             reason = punishment.get("reason", "Без причины")
+            dur_text = format_duration_seconds(int(punishment.get("duration_seconds") or 0))
             guild = interaction.guild or (self.bot.guilds[0] if self.bot.guilds else None)
 
             # Lookup Discord ID from staff stats by nickname if not present
@@ -2083,7 +2344,7 @@ class StaffCog(commands.Cog, name="Staff"):
                 if staff_row and staff_row.get("user_id"):
                     mod_id = int(staff_row["user_id"])
 
-            # Send private message to moderator if found
+            # Send private message to moderator with prompt to provide proof in DM
             if guild and mod_id:
                 mod_member = guild.get_member(mod_id)
                 if mod_member:
@@ -2091,11 +2352,15 @@ class StaffCog(commands.Cog, name="Staff"):
                         title="⚠️ ЗАПРОС ДОКАЗАТЕЛЬСТВ ПО НАКАЗАНИЮ",
                         description=(
                             f"Здравствуйте, {mod_member.mention}!\n\n"
-                            f"Куратор / Администратор {interaction.user.mention} запросил у вас доказательства (видеозапись или скриншот) по выданному наказанию:\n"
+                            f"Куратор / Администратор {interaction.user.mention} запросил у вас доказательства (видеозапись, скриншоты) по выданному наказанию:\n"
                             f"⚡ **Тип:** `{p_type}` (ID: `#{punish_id}`)\n"
                             f"🎯 **Игрок:** `{target_nick}`\n"
-                            f"📌 **Причина:** `{reason}`\n\n"
-                            f"Нажмите на кнопку ниже, чтобы отправить ссылку на доказательства."
+                            f"📌 **Причина:** `{reason}`\n"
+                            f"⏳ **Срок:** `{dur_text}`\n\n"
+                            f"⚠️ **У вас есть 24 часа на предоставление доказательств!**\n"
+                            f"Если доказательства не будут предоставлены в течение 24 часов, бот автоматически выдаст вам выговор.\n\n"
+                            f"👉 **Предоставьте ниже ссылки, скриншоты, видео для доказательства виновности.**\n"
+                            f"*(Отправьте файлы или ссылки прямо в этот чат с ботом или воспользуйтесь кнопкой ниже)*"
                         ),
                         color=COLOR_WARNING,
                     )
@@ -2114,14 +2379,15 @@ class StaffCog(commands.Cog, name="Staff"):
                         f"👤 **Модератор:** {mod_mention} (`{mod_nick}`)\n"
                         f"🎯 **Игрок:** `{target_nick}`\n"
                         f"⚡ **Наказание:** `{p_type}` (ID: `#{punish_id}`)\n"
-                        f"📌 **Причина:** `{reason}`"
+                        f"📌 **Причина:** `{reason}`\n"
+                        f"⏳ **Срок на ответ модератора:** 24 часа."
                     ),
                     color=COLOR_WARNING,
                 )
                 await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, curators_embed)
 
         # ---------------------------------------------------------------------
-        # 2. SUBMIT PROOF BUTTON (Moderator who issued punishment or Staff Management)
+        # 2. MODAL SUBMIT BUTTON
         # ---------------------------------------------------------------------
         elif custom_id.startswith("flory_submit_proof:"):
             try:
@@ -2156,6 +2422,297 @@ class StaffCog(commands.Cog, name="Staff"):
 
             modal = SubmitProofModal(bot=self.bot, punish_id=punish_id, punishment=punishment)
             await interaction.response.send_modal(modal)
+
+        # ---------------------------------------------------------------------
+        # 3. MODERATOR FINISH PROOF SUBMISSION (BUTTON "🚀 Отправить все материалы")
+        # ---------------------------------------------------------------------
+        elif custom_id.startswith("flory_finish_proof:"):
+            try:
+                punish_id = int(custom_id.split(":")[1])
+            except (IndexError, ValueError):
+                await interaction.response.send_message("❌ Некорректный ID наказания.", ephemeral=True)
+                return
+
+            guild = interaction.guild or (self.bot.guilds[0] if self.bot.guilds else None)
+            guild_id = guild.id if guild else 0
+            punishment = await db.get_punishment_by_id(punish_id, guild_id)
+            if not punishment:
+                await interaction.response.send_message("❌ Запись о наказании не найдена.", ephemeral=True)
+                return
+
+            if punishment.get("proof_status") != "PENDING_MOD":
+                await interaction.response.send_message(
+                    f"⚠️ Доказательства по данному наказанию уже переданы куратору или рассмотрены (Статус: `{punishment.get('proof_status')}`).",
+                    ephemeral=True,
+                )
+                return
+
+            # Mark status as PENDING_CURATOR
+            await db.submit_punishment_proof(
+                punishment_id=punish_id,
+                guild_id=guild_id,
+            )
+
+            # Refresh punishment record
+            punishment = await db.get_punishment_by_id(punish_id, guild_id)
+            materials = []
+            try:
+                materials = json.loads(punishment.get("proof_materials") or "[]")
+            except Exception:
+                pass
+
+            # Inform moderator in DM
+            await interaction.response.send_message(
+                f"✅ **Все доказательства по наказанию `#{punish_id}` успешно отправлены на проверку!**\n\n"
+                f"⏳ У куратора есть **24 часа** на ответ. Если ответа не поступит, доказательства будут подтверждены автоматически.",
+            )
+
+            # Disable buttons on previous message
+            try:
+                if interaction.message:
+                    await interaction.message.edit(view=None)
+            except Exception:
+                pass
+
+            # Forward to requester / curator
+            requester_id = int(punishment.get("proof_requested_by") or 0)
+            target_nick = punishment.get("target_nick", "Unknown")
+            mod_nick = punishment.get("moderator_nick", "Unknown")
+            mod_id = int(punishment.get("moderator_id") or 0)
+            p_type = punishment.get("punishment_type", "НАКАЗАНИЕ")
+            reason = punishment.get("reason", "Без причины")
+            materials_summary = format_proof_materials_summary(
+                materials,
+                fallback_url=punishment.get("proof_url", ""),
+                fallback_comment=punishment.get("proof_comment", ""),
+            )
+
+            curator_embed = create_security_embed(
+                title=f"📥 ПРЕДОСТАВЛЕНЫ ДОКАЗАТЕЛЬСТВА (#{punish_id})",
+                description=(
+                    f"👤 **От модератора:** `{mod_nick}` (<@{mod_id}>)\n"
+                    f"🎯 **Игрок (цель):** `{target_nick}`\n"
+                    f"⚡ **Наказание:** `{p_type}` (ID: `#{punish_id}`)\n"
+                    f"📌 **Причина:** `{reason}`\n\n"
+                    f"{materials_summary}\n\n"
+                    f"⏳ **Срок на ответ куратору:** 24 часа (при отсутствии ответа наказание подтвердится автоматически)."
+                ),
+                color=COLOR_WARNING,
+            )
+
+            curator_view = CuratorProofReviewView(punish_id=punish_id)
+
+            # Send to requester DM
+            if requester_id and guild:
+                curator_member = guild.get_member(requester_id)
+                if curator_member:
+                    try:
+                        cur_msg = await curator_member.send(embed=curator_embed, view=curator_view)
+                        if cur_msg:
+                            await db.submit_punishment_proof(
+                                punishment_id=punish_id,
+                                guild_id=guild_id,
+                                curator_msg_id=cur_msg.id,
+                                curator_channel_id=cur_msg.channel.id,
+                            )
+                    except Exception as e:
+                        logger.warning(f"Could not send proof review to curator DM: {e}")
+
+            # Send to #curators-audit channel
+            if guild:
+                audit_embed = create_security_embed(
+                    title=f"📥 ПРЕДОСТАВЛЕНЫ ДОКАЗАТЕЛЬСТВА (#{punish_id})",
+                    description=(
+                        f"👤 **Модератор:** `{mod_nick}` (<@{mod_id}>)\n"
+                        f"🎯 **Игрок:** `{target_nick}`\n"
+                        f"⚡ **Наказание:** `{p_type}` (ID: `#{punish_id}`)\n"
+                        f"📌 **Причина:** `{reason}`\n"
+                        f"👮 **Запросил:** <@{requester_id}>\n\n"
+                        f"{materials_summary}\n\n"
+                        f"⏳ **Срок на ответ куратору:** 24 часа."
+                    ),
+                    color=COLOR_WARNING,
+                )
+                await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed, view=curator_view)
+
+        # ---------------------------------------------------------------------
+        # 4. MODERATOR ADDS MORE MATERIALS (BUTTON "➕ Добавить еще материалы")
+        # ---------------------------------------------------------------------
+        elif custom_id.startswith("flory_add_more:"):
+            await interaction.response.send_message(
+                "💬 Отправьте дополнительные ссылки, пояснения или прикрепите файлы скриншотов/видео прямо сюда в чат.",
+                ephemeral=False,
+            )
+
+        # ---------------------------------------------------------------------
+        # 5. CURATOR VERDICT: НАКАЗАНИЕ ВЕРНО
+        # ---------------------------------------------------------------------
+        elif custom_id.startswith("flory_proof_valid:"):
+            if not isinstance(interaction.user, discord.Member) or not can_request_punishment_proof(interaction.user):
+                await interaction.response.send_message(
+                    "❌ У вас нет прав для вынесения вердикта по доказательствам.", ephemeral=True
+                )
+                return
+
+            try:
+                punish_id = int(custom_id.split(":")[1])
+            except (IndexError, ValueError):
+                await interaction.response.send_message("❌ Некорректный ID наказания.", ephemeral=True)
+                return
+
+            guild = interaction.guild or (self.bot.guilds[0] if self.bot.guilds else None)
+            guild_id = guild.id if guild else 0
+            punishment = await db.get_punishment_by_id(punish_id, guild_id)
+            if not punishment:
+                await interaction.response.send_message("❌ Запись о наказании не найдена.", ephemeral=True)
+                return
+
+            if punishment.get("proof_status") in ("APPROVED", "REJECTED", "EXPIRED_NO_PROOF", "EXPIRED_AUTO_APPROVED"):
+                await interaction.response.send_message(
+                    f"⚠️ По данному наказанию уже вынесен вердикт (`{punishment.get('proof_status')}`).",
+                    ephemeral=True,
+                )
+                return
+
+            # Mark as APPROVED in database
+            await db.resolve_punishment_proof(punish_id, guild_id, "APPROVED", interaction.user.id)
+
+            # Update review message
+            try:
+                if interaction.message and interaction.message.embeds:
+                    orig_embed = interaction.message.embeds[0]
+                    new_embed = orig_embed.copy()
+                    new_embed.color = COLOR_SUCCESS
+                    new_embed.add_field(
+                        name="⚖️ Вердикт куратора",
+                        value=f"✅ **Наказание верно** (Проверил: {interaction.user.mention})",
+                        inline=False,
+                    )
+                    await interaction.message.edit(embed=new_embed, view=None)
+            except Exception:
+                pass
+
+            await interaction.response.send_message(
+                f"✅ Вы подтвердили, что наказание `#{punish_id}` выдано верно.", ephemeral=True
+            )
+
+            # Notify moderator in DM
+            mod_id = int(punishment.get("moderator_id") or 0)
+            if not mod_id and guild:
+                mod_nick = punishment.get("moderator_nick", "")
+                staff_row = await db.get_staff_stats(guild.id, 0, fallback_nicks=[mod_nick])
+                if staff_row and staff_row.get("user_id"):
+                    mod_id = int(staff_row["user_id"])
+
+            if guild and mod_id:
+                mod_member = guild.get_member(mod_id)
+                if mod_member:
+                    mod_dm = create_security_embed(
+                        title=f"✅ НАКАЗАНИЕ #{punish_id} ПОДТВЕРЖДЕНО",
+                        description=(
+                            f"Здравствуйте, {mod_member.mention}!\n\n"
+                            f"Куратор {interaction.user.mention} проверил ваши доказательства по наказанию `#{punish_id}`.\n"
+                            f"🎯 **Игрок:** `{punishment.get('target_nick')}`\n"
+                            f"⚡ **Вердикт:** **Наказание выдано верно!**\n"
+                            f"Наказание полностью подтверждено и остается в силе."
+                        ),
+                        color=COLOR_SUCCESS,
+                    )
+                    try:
+                        await mod_member.send(embed=mod_dm)
+                    except Exception:
+                        pass
+
+            # Log to #curators-audit
+            if guild:
+                curators_log = create_security_embed(
+                    title=f"✅ НАКАЗАНИЕ #{punish_id} ПОДТВЕРЖДЕНО КУРАТОРОМ",
+                    description=(
+                        f"⚖️ **Куратор:** {interaction.user.mention}\n"
+                        f"👤 **Модератор:** `{punishment.get('moderator_nick')}` (<@{mod_id}>)\n"
+                        f"🎯 **Игрок:** `{punishment.get('target_nick')}`\n"
+                        f"⚡ **Наказание:** `{punishment.get('punishment_type')}` (ID: `#{punish_id}`)\n"
+                        f"📊 **Статус:** Наказание признано верным, статистика сохранена."
+                    ),
+                    color=COLOR_SUCCESS,
+                )
+                await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, curators_log)
+
+        # ---------------------------------------------------------------------
+        # 6. CURATOR VERDICT: НАКАЗАНИЕ НЕ ВЕРНО (ВЫГОВОР МОДЕРАТОРУ)
+        # ---------------------------------------------------------------------
+        elif custom_id.startswith("flory_proof_invalid:"):
+            if not isinstance(interaction.user, discord.Member) or not can_request_punishment_proof(interaction.user):
+                await interaction.response.send_message(
+                    "❌ У вас нет прав для вынесения вердикта по доказательствам.", ephemeral=True
+                )
+                return
+
+            try:
+                punish_id = int(custom_id.split(":")[1])
+            except (IndexError, ValueError):
+                await interaction.response.send_message("❌ Некорректный ID наказания.", ephemeral=True)
+                return
+
+            guild = interaction.guild or (self.bot.guilds[0] if self.bot.guilds else None)
+            guild_id = guild.id if guild else 0
+            punishment = await db.get_punishment_by_id(punish_id, guild_id)
+            if not punishment:
+                await interaction.response.send_message("❌ Запись о наказании не найдена.", ephemeral=True)
+                return
+
+            if punishment.get("proof_status") in ("APPROVED", "REJECTED", "EXPIRED_NO_PROOF", "EXPIRED_AUTO_APPROVED"):
+                await interaction.response.send_message(
+                    f"⚠️ По данному наказанию уже вынесен вердикт (`{punishment.get('proof_status')}`).",
+                    ephemeral=True,
+                )
+                return
+
+            # Mark as REJECTED in database
+            await db.resolve_punishment_proof(punish_id, guild_id, "REJECTED", interaction.user.id)
+            # Invalidate punishment stats
+            await db.invalidate_punishment(punish_id, guild_id)
+
+            # Issue reprimand to moderator
+            mod_id = int(punishment.get("moderator_id") or 0)
+            if not mod_id and guild:
+                mod_nick = punishment.get("moderator_nick", "")
+                staff_row = await db.get_staff_stats(guild.id, 0, fallback_nicks=[mod_nick])
+                if staff_row and staff_row.get("user_id"):
+                    mod_id = int(staff_row["user_id"])
+
+            warn_reason = f"Наказание выдано не верно (#{punish_id})"
+            situation = f"Куратор {interaction.user.display_name} отклонил доказательства по наказанию #{punish_id} (игрок {punishment.get('target_nick')})"
+
+            if guild and mod_id:
+                await issue_staff_system_warn(
+                    bot=self.bot,
+                    guild=guild,
+                    user_id=mod_id,
+                    reason=warn_reason,
+                    situation=situation,
+                    issued_by_id=interaction.user.id,
+                    punish_id=punish_id,
+                )
+
+            # Update review message
+            try:
+                if interaction.message and interaction.message.embeds:
+                    orig_embed = interaction.message.embeds[0]
+                    new_embed = orig_embed.copy()
+                    new_embed.color = COLOR_DANGER
+                    new_embed.add_field(
+                        name="⚖️ Вердикт куратора",
+                        value=f"❌ **Наказание не верно** (Куратор: {interaction.user.mention})\n⚠️ Модератору выдан выговор: `{warn_reason}`",
+                        inline=False,
+                    )
+                    await interaction.message.edit(embed=new_embed, view=None)
+            except Exception:
+                pass
+
+            await interaction.response.send_message(
+                f"❌ Наказание `#{punish_id}` отклонено как неверное. Модератору выдан выговор.", ephemeral=True
+            )
 
     async def _ingest_pending_sync_messages(self, guild: discord.Guild):
         """Checks the guild log channel for any unprocessed __FLORY_SYNC__ packets."""
@@ -2196,6 +2753,168 @@ class StaffCog(commands.Cog, name="Staff"):
 
     @weekly_digest_task.before_loop
     async def before_weekly_digest(self):
+        await self.bot.wait_until_ready()
+
+    # =========================================================================
+    # PROOF DEADLINE & TIMEOUT BACKGROUND TASK (RUNS EVERY 30 SECONDS)
+    # =========================================================================
+    @tasks.loop(seconds=30)
+    async def proof_timeout_task(self):
+        """
+        Background scheduler checking 24-hour proof deadlines:
+        1. Moderator 24h timeout (PENDING_MOD -> EXPIRED_NO_PROOF): auto-warns moderator.
+        2. Curator 24h timeout (PENDING_CURATOR -> EXPIRED_AUTO_APPROVED): auto-approves punishment.
+        """
+        try:
+            # 1. Moderator 24-hour timeout (No proof submitted)
+            expired_mods = await db.get_expired_pending_mod_proofs(timeout_seconds=86400)
+            for p in expired_mods:
+                punish_id = int(p["id"])
+                guild_id = int(p.get("guild_id") or 0)
+                guild = self.bot.get_guild(guild_id) or (self.bot.guilds[0] if self.bot.guilds else None)
+
+                # Set status to EXPIRED_NO_PROOF
+                await db.resolve_punishment_proof(punish_id, guild_id, "EXPIRED_NO_PROOF")
+
+                mod_id = int(p.get("moderator_id") or 0)
+                mod_nick = p.get("moderator_nick", "Unknown")
+                target_nick = p.get("target_nick", "Unknown")
+                requester_id = int(p.get("proof_requested_by") or 0)
+
+                if not mod_id and guild:
+                    staff_row = await db.get_staff_stats(guild.id, 0, fallback_nicks=[mod_nick])
+                    if staff_row and staff_row.get("user_id"):
+                        mod_id = int(staff_row["user_id"])
+
+                warn_reason = f"Игнорирование выдачи доказательств на наказание #{punish_id}"
+                situation = f"Модератор {mod_nick} не предоставил доказательства по наказанию #{punish_id} (цель {target_nick}) в течение 24 часов."
+
+                if guild and mod_id:
+                    await issue_staff_system_warn(
+                        bot=self.bot,
+                        guild=guild,
+                        user_id=mod_id,
+                        reason=warn_reason,
+                        situation=situation,
+                        issued_by_id=requester_id,
+                        punish_id=punish_id,
+                    )
+
+                # Notify requester in DM
+                if guild and requester_id:
+                    req_member = guild.get_member(requester_id)
+                    if req_member:
+                        try:
+                            req_dm = create_security_embed(
+                                title=f"⚠️ ТАЙМАУТ ПРЕДОСТАВЛЕНИЯ ДОКАЗАТЕЛЬСТВ (#{punish_id})",
+                                description=(
+                                    f"Здравствуйте, {req_member.mention}!\n\n"
+                                    f"Модератор `{mod_nick}` (<@{mod_id}>) не предоставил доказательства по наказанию `#{punish_id}` за 24 часа.\n"
+                                    f"⚠️ Бот автоматически выдал модератору выговор:\n"
+                                    f"**Причина:** `{warn_reason}`"
+                                ),
+                                color=COLOR_DANGER,
+                            )
+                            await req_member.send(embed=req_dm)
+                        except Exception:
+                            pass
+
+                # Also log to #curators-audit
+                if guild:
+                    timeout_audit = create_security_embed(
+                        title=f"⚠️ ТАЙМАУТ ВЫДАЧИ ДОКАЗАТЕЛЬСТВ (#{punish_id})",
+                        description=(
+                            f"👤 **Модератор:** `{mod_nick}` (<@{mod_id}>)\n"
+                            f"🎯 **Игрок:** `{target_nick}`\n"
+                            f"⚡ **Наказание:** `{p.get('punishment_type')}` (ID: `#{punish_id}`)\n"
+                            f"⏳ **Статус:** 24 часа истекли. Модератор проигнорировал запрос.\n"
+                            f"⚠️ **Действие:** Выдан системный выговор: `{warn_reason}`"
+                        ),
+                        color=COLOR_DANGER,
+                    )
+                    await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, timeout_audit)
+
+            # 2. Curator 24-hour timeout (Curator didn't answer)
+            expired_curators = await db.get_expired_pending_curator_proofs(timeout_seconds=86400)
+            for p in expired_curators:
+                punish_id = int(p["id"])
+                guild_id = int(p.get("guild_id") or 0)
+                guild = self.bot.get_guild(guild_id) or (self.bot.guilds[0] if self.bot.guilds else None)
+
+                # Set status to EXPIRED_AUTO_APPROVED
+                await db.resolve_punishment_proof(punish_id, guild_id, "EXPIRED_AUTO_APPROVED")
+
+                mod_id = int(p.get("moderator_id") or 0)
+                mod_nick = p.get("moderator_nick", "Unknown")
+                target_nick = p.get("target_nick", "Unknown")
+                requester_id = int(p.get("proof_requested_by") or 0)
+
+                if not mod_id and guild:
+                    staff_row = await db.get_staff_stats(guild.id, 0, fallback_nicks=[mod_nick])
+                    if staff_row and staff_row.get("user_id"):
+                        mod_id = int(staff_row["user_id"])
+
+                # Notify moderator in DM
+                if guild and mod_id:
+                    mod_member = guild.get_member(mod_id)
+                    if mod_member:
+                        try:
+                            mod_dm = create_security_embed(
+                                title=f"🛡️ НАКАЗАНИЕ #{punish_id} ПОДТВЕРЖДЕНО АВТОМАТИЧЕСКИ",
+                                description=(
+                                    f"Здравствуйте, {mod_member.mention}!\n\n"
+                                    f"Срок рассмотрения доказательств куратором истек (24 часа).\n"
+                                    f"Доказательства по выданному наказанию `#{punish_id}` (**{target_nick}**) автоматически признаны верными!"
+                                ),
+                                color=COLOR_SUCCESS,
+                            )
+                            await mod_member.send(embed=mod_dm)
+                        except Exception:
+                            pass
+
+                # Update curator DM message if present
+                cur_msg_id = int(p.get("proof_curator_msg_id") or 0)
+                cur_ch_id = int(p.get("proof_curator_channel_id") or 0)
+                if cur_msg_id and cur_ch_id:
+                    try:
+                        ch = self.bot.get_channel(cur_ch_id)
+                        if not ch:
+                            ch = await self.bot.fetch_channel(cur_ch_id)
+                        if ch:
+                            msg = await ch.fetch_message(cur_msg_id)
+                            if msg and msg.embeds:
+                                new_embed = msg.embeds[0].copy()
+                                new_embed.color = COLOR_SUCCESS
+                                new_embed.add_field(
+                                    name="⚖️ Вердикт",
+                                    value="🛡️ **Автоматически подтверждено** (Куратор не ответил в течение 24 часов).",
+                                    inline=False,
+                                )
+                                await msg.edit(embed=new_embed, view=None)
+                    except Exception:
+                        pass
+
+                # Also log to #curators-audit
+                if guild:
+                    auto_audit = create_security_embed(
+                        title=f"🛡️ ДОКАЗАТЕЛЬСТВА АВТОМАТИЧЕСКИ ПОДТВЕРЖДЕНЫ (#{punish_id})",
+                        description=(
+                            f"👤 **Модератор:** `{mod_nick}` (<@{mod_id}>)\n"
+                            f"🎯 **Игрок:** `{target_nick}`\n"
+                            f"⚡ **Наказание:** `{p.get('punishment_type')}` (ID: `#{punish_id}`)\n"
+                            f"👮 **Куратор (запросил):** <@{requester_id}>\n"
+                            f"⏳ **Причина:** Истекло 24 часа ожидания вердикта куратора.\n"
+                            f"✅ **Вердикт:** Доказательства подтверждены автоматически, наказание верно."
+                        ),
+                        color=COLOR_SUCCESS,
+                    )
+                    await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, auto_audit)
+
+        except Exception as e:
+            logger.error(f"Error in proof_timeout_task: {e}", exc_info=True)
+
+    @proof_timeout_task.before_loop
+    async def before_proof_timeout(self):
         await self.bot.wait_until_ready()
 
     async def send_weekly_digest(self, guild: discord.Guild):
@@ -2645,6 +3364,141 @@ class StaffCog(commands.Cog, name="Staff"):
             color=COLOR_FLORY_ORANGE,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # =========================================================================
+    # /PUNISHMENT-INFO (CURATORS, ADMINS, HEAD MODERS, STAFF MANAGEMENT)
+    # =========================================================================
+    @app_commands.command(
+        name="punishment-info",
+        description="Информация о наказании, запрошенных доказательствах и вердикте стаффа"
+    )
+    @app_commands.describe(
+        punishment_id="Уникальный ID наказания (например: 12)"
+    )
+    async def punishment_info_command(
+        self, interaction: discord.Interaction, punishment_id: int
+    ):
+        if not await self._check_guild_auth(interaction):
+            return
+
+        if not isinstance(interaction.user, discord.Member) or not can_request_punishment_proof(interaction.user):
+            await interaction.response.send_message(
+                "❌ Команда доступна только Кураторам, Администрации, Гл. Модераторам и сотрудникам с ролью `Отвечает | Staff`.",
+                ephemeral=True,
+            )
+            return
+
+        guild = interaction.guild
+        punishment = await db.get_punishment_by_id(punishment_id, guild.id)
+        if not punishment:
+            await interaction.response.send_message(
+                f"❌ Наказание с ID `#{punishment_id}` не найдено в базе данных.", ephemeral=True
+            )
+            return
+
+        p_type = punishment.get("punishment_type", "НАКАЗАНИЕ")
+        target_nick = punishment.get("target_nick", "Unknown")
+        mod_nick = punishment.get("moderator_nick", "Unknown")
+        mod_id = int(punishment.get("moderator_id") or 0)
+        reason = punishment.get("reason", "Без причины")
+        dur_text = format_duration_seconds(int(punishment.get("duration_seconds") or 0))
+        created_at_raw = punishment.get("created_at", "")
+        created_msk = "Неизвестно"
+        if created_at_raw:
+            try:
+                dt = datetime.fromisoformat(created_at_raw).astimezone(zoneinfo.ZoneInfo("Europe/Moscow"))
+                created_msk = dt.strftime("%d.%m.%Y %H:%M:%S МСК")
+            except Exception:
+                created_msk = created_at_raw
+
+        proof_status = punishment.get("proof_status") or "NONE"
+        req_by = int(punishment.get("proof_requested_by") or 0)
+        req_at = punishment.get("proof_requested_at")
+        sub_at = punishment.get("proof_submitted_at")
+        rev_by = int(punishment.get("proof_reviewed_by") or 0)
+
+        # Status badge & embed color
+        status_text = "⚪ Не запрашивались"
+        embed_color = COLOR_PRIMARY
+        if proof_status == "PENDING_MOD":
+            embed_color = COLOR_WARNING
+            time_left = ""
+            if req_at:
+                try:
+                    dt = datetime.fromisoformat(req_at)
+                    rem = int(86400 - (datetime.now(timezone.utc) - dt).total_seconds())
+                    if rem > 0:
+                        time_left = f" *(осталось {rem // 3600} ч. {(rem % 3600) // 60} мин.)*"
+                    else:
+                        time_left = " *(срок истек)*"
+                except Exception:
+                    pass
+            status_text = f"⏳ **Ожидание доказательств от модератора** (<@{req_by}>){time_left}"
+
+        elif proof_status == "PENDING_CURATOR":
+            embed_color = COLOR_WARNING
+            time_left = ""
+            if sub_at:
+                try:
+                    dt = datetime.fromisoformat(sub_at)
+                    rem = int(86400 - (datetime.now(timezone.utc) - dt).total_seconds())
+                    if rem > 0:
+                        time_left = f" *(осталось {rem // 3600} ч. {(rem % 3600) // 60} мин.)*"
+                    else:
+                        time_left = " *(срок истек)*"
+                except Exception:
+                    pass
+            status_text = f"🔍 **Ожидание вердикта куратора** (<@{req_by}>){time_left}"
+
+        elif proof_status == "APPROVED":
+            embed_color = COLOR_SUCCESS
+            status_text = f"✅ **Наказание верно** (Проверил: <@{rev_by}>)"
+
+        elif proof_status == "REJECTED":
+            embed_color = COLOR_DANGER
+            status_text = f"❌ **Наказание не верно** (Отклонил: <@{rev_by}>, модератору выдан выговор)"
+
+        elif proof_status == "EXPIRED_NO_PROOF":
+            embed_color = COLOR_DANGER
+            status_text = "⚠️ **Срок истек (24ч)** — модератор не предоставил доказательства (выдан выговор за игнорирование)"
+
+        elif proof_status == "EXPIRED_AUTO_APPROVED":
+            embed_color = COLOR_SUCCESS
+            status_text = "🛡️ **Авто-подтверждено** (Куратор не ответил за 24ч, наказание считается верным)"
+
+        materials = []
+        try:
+            materials = json.loads(punishment.get("proof_materials") or "[]")
+        except Exception:
+            pass
+
+        materials_summary = format_proof_materials_summary(
+            materials,
+            fallback_url=punishment.get("proof_url", ""),
+            fallback_comment=punishment.get("proof_comment", ""),
+        )
+
+        mod_display = f"`{mod_nick}` (<@{mod_id}>)" if mod_id else f"`{mod_nick}`"
+        info_embed = create_security_embed(
+            title=f"📋 ИНФОРМАЦИЯ О НАКАЗАНИИ #{punishment_id}",
+            description=(
+                f"⚡ **Тип наказания:** `{p_type}`\n"
+                f"🎯 **Нарушитель (игрок):** `{target_nick}`\n"
+                f"👤 **Выдал модератор:** {mod_display}\n"
+                f"📌 **Причина:** `{reason}`\n"
+                f"⏳ **Длительность:** `{dur_text}`\n"
+                f"📅 **Дата выдачи:** `{created_msk}`\n\n"
+                f"⚖️ **Статус проверки доказательств:**\n{status_text}\n\n"
+                f"📎 **Материалы доказательств:**\n{materials_summary}"
+            ),
+            color=embed_color,
+        )
+
+        view = None
+        if proof_status == "PENDING_CURATOR":
+            view = CuratorProofReviewView(punish_id=punishment_id)
+
+        await interaction.response.send_message(embed=info_embed, view=view, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
