@@ -60,6 +60,7 @@ from utils.embeds import (
 )
 from utils.logger import logger
 
+SYNC_PREFIXES = ("FLORY_SYNC", "__FLORY_SYNC__")
 SYNC_PREFIX = "__FLORY_SYNC__"
 
 # Map LuckPerms group names from FloryModerators / FloryAuthentication -> (Display Rank Name, Discord Role ID)
@@ -2032,10 +2033,22 @@ class StaffCog(commands.Cog, name="Staff"):
         return False
 
     async def _process_sync_payload(self, raw_text: str, default_guild_id: int) -> bool:
-        """Parses __FLORY_SYNC__ JSON packet from FloryModerators, validates anti-abuse, and logs actions."""
-        if not raw_text or not raw_text.startswith(SYNC_PREFIX):
+        """Parses FLORY_SYNC / __FLORY_SYNC__ JSON packet from FloryModerators, validates anti-abuse, and logs actions."""
+        if not raw_text:
             return False
-        json_part = raw_text[len(SYNC_PREFIX):].strip()
+        clean_text = raw_text.strip()
+        matched_prefix = None
+        for p in SYNC_PREFIXES:
+            if clean_text.startswith(p):
+                matched_prefix = p
+                break
+        if not matched_prefix:
+            return False
+
+        json_part = clean_text[len(matched_prefix):].strip()
+        if not json_part:
+            return False
+
         try:
             payload = json.loads(json_part)
             items = payload if isinstance(payload, list) else [payload]
@@ -2223,47 +2236,51 @@ class StaffCog(commands.Cog, name="Staff"):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """Real-time Cloud Sync listener for FloryModerators packets & DM proof material collector."""
-        if not message.author or message.author.bot:
+        if not message.content and not message.attachments:
             return
 
-        # 1. Real-time DM collector for moderator proof materials
+        # 1. Real-time DM collector for moderator proof materials (humans only)
         if message.guild is None:
-            active_req = await db.get_active_mod_proof_request(user_id=message.author.id)
-            if active_req and active_req.get("proof_status") == "PENDING_MOD":
-                punish_id = int(active_req["id"])
-                guild_id = int(active_req.get("guild_id") or 0)
-                text = (message.content or "").strip()
-                attachments = [att.url for att in message.attachments if att.url]
-                if text or attachments:
-                    await db.append_punishment_proof_material(
-                        punishment_id=punish_id,
-                        guild_id=guild_id,
-                        text=text,
-                        attachments=attachments,
-                    )
-                    confirm_embed = create_security_embed(
-                        title=f"📎 Материалы по наказанию #{punish_id} получены",
-                        description=(
-                            "Мы зафиксировали отправленные вами материалы!\n\n"
-                            "❓ **Это все доказательства?**\n"
-                            "• Если **да** — нажмите кнопку **[ 🚀 Отправить все материалы ]** ниже.\n"
-                            "• Если **нет** — просто отправьте еще ссылки, скриншоты или видео в этот чат."
-                        ),
-                        color=COLOR_PRIMARY,
-                    )
-                    await message.channel.send(
-                        embed=confirm_embed,
-                        view=SendProofConfirmView(punish_id=punish_id)
-                    )
+            if message.author and not message.author.bot:
+                active_req = await db.get_active_mod_proof_request(user_id=message.author.id)
+                if active_req and active_req.get("proof_status") == "PENDING_MOD":
+                    punish_id = int(active_req["id"])
+                    guild_id = int(active_req.get("guild_id") or 0)
+                    text = (message.content or "").strip()
+                    attachments = [att.url for att in message.attachments if att.url]
+                    if text or attachments:
+                        await db.append_punishment_proof_material(
+                            punishment_id=punish_id,
+                            guild_id=guild_id,
+                            text=text,
+                            attachments=attachments,
+                        )
+                        confirm_embed = create_security_embed(
+                            title=f"📎 Материалы по наказанию #{punish_id} получены",
+                            description=(
+                                "Мы зафиксировали отправленные вами материалы!\n\n"
+                                "❓ **Это все доказательства?**\n"
+                                "• Если **да** — нажмите кнопку **[ 🚀 Отправить все материалы ]** ниже.\n"
+                                "• Если **нет** — просто отправьте еще ссылки, скриншоты или видео в этот чат."
+                            ),
+                            color=COLOR_PRIMARY,
+                        )
+                        await message.channel.send(
+                            embed=confirm_embed,
+                            view=SendProofConfirmView(punish_id=punish_id)
+                        )
             return
 
-        # 2. Server channels: sync packets
-        if message.content and message.content.startswith(SYNC_PREFIX):
-            await self._process_sync_payload(message.content, message.guild.id)
-            try:
-                await message.delete()
-            except Exception:
-                pass
+        # 2. Server channels: sync packets from Minecraft plugin (must process even if sent by bot/webhook)
+        if message.guild and message.content:
+            clean = message.content.strip()
+            if any(clean.startswith(p) for p in SYNC_PREFIXES):
+                processed = await self._process_sync_payload(clean, message.guild.id)
+                if processed:
+                    try:
+                        await message.delete()
+                    except Exception as del_err:
+                        logger.debug(f"Could not delete sync message: {del_err}")
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
@@ -2714,21 +2731,39 @@ class StaffCog(commands.Cog, name="Staff"):
                 f"❌ Наказание `#{punish_id}` отклонено как неверное. Модератору выдан выговор.", ephemeral=True
             )
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """On startup, scan and process any accumulated sync messages from bridge channels."""
+        for guild in self.bot.guilds:
+            if is_authorized_guild(guild):
+                try:
+                    await self._ingest_pending_sync_messages(guild)
+                except Exception as e:
+                    logger.debug(f"Startup sync ingest failed for {guild.name}: {e}")
+
     async def _ingest_pending_sync_messages(self, guild: discord.Guild):
-        """Checks the guild log channel for any unprocessed __FLORY_SYNC__ packets."""
+        """Checks the guild log channel for any unprocessed sync packets and cleans them up."""
         guild_cfg = AUTHORIZED_GUILDS.get(guild.id, {})
         log_channel_id = guild_cfg.get("log_channel_id", 1391723887846490224)
         channel = guild.get_channel(log_channel_id)
+        if not channel:
+            try:
+                channel = await self.bot.fetch_channel(log_channel_id)
+            except Exception:
+                channel = None
         if not isinstance(channel, discord.TextChannel):
             return
         try:
-            async for msg in channel.history(limit=15):
-                if msg.content and msg.content.startswith(SYNC_PREFIX):
-                    await self._process_sync_payload(msg.content, guild.id)
-                    try:
-                        await msg.delete()
-                    except Exception:
-                        pass
+            async for msg in channel.history(limit=100):
+                if msg.content:
+                    clean = msg.content.strip()
+                    if any(clean.startswith(p) for p in SYNC_PREFIXES):
+                        processed = await self._process_sync_payload(clean, guild.id)
+                        if processed:
+                            try:
+                                await msg.delete()
+                            except Exception:
+                                pass
         except Exception as e:
             logger.debug(f"Could not scan sync history: {e}")
 
