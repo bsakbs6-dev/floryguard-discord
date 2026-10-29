@@ -1,4 +1,5 @@
 import asyncio
+import re
 import json
 import random
 from datetime import datetime, timezone, timedelta
@@ -37,6 +38,7 @@ from core.permissions import (
     has_warn_access,
     can_schedule_attestation,
     can_unblock_attestation,
+    can_request_punishment_proof,
     is_senior_admin,
     is_higher_admin,
     is_bot_owner,
@@ -1575,6 +1577,140 @@ class ResetWeeklyOnlineView(discord.ui.View):
 
 
 # =========================================================================
+# PUNISHMENT PROOF & AUDIT VIEWS
+# =========================================================================
+class PunishmentProofRequestView(discord.ui.View):
+    """View attached under every MUTE and BAN log with a button to request proof."""
+    def __init__(self, punish_id: int):
+        super().__init__(timeout=None)
+        self.add_item(
+            discord.ui.Button(
+                label="❓ Запросить доказательства",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"flory_req_proof:{punish_id}",
+            )
+        )
+
+
+class PunishmentProofSubmitView(discord.ui.View):
+    """View shown after proof has been requested with a button to submit proof."""
+    def __init__(self, punish_id: int):
+        super().__init__(timeout=None)
+        self.add_item(
+            discord.ui.Button(
+                label="📎 Прикрепить доказательства",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"flory_submit_proof:{punish_id}",
+            )
+        )
+
+
+class PunishmentProofDoneView(discord.ui.View):
+    """View shown when proof has been successfully attached."""
+    def __init__(self, proof_url: str):
+        super().__init__(timeout=None)
+        is_valid_url = bool(re.match(r"^https?://", proof_url, re.IGNORECASE))
+        if is_valid_url:
+            self.add_item(
+                discord.ui.Button(
+                    label="📎 Доказательства прикреплены",
+                    style=discord.ButtonStyle.link,
+                    url=proof_url,
+                )
+            )
+        else:
+            self.add_item(
+                discord.ui.Button(
+                    label="✅ Доказательства прикреплены",
+                    style=discord.ButtonStyle.secondary,
+                    disabled=True,
+                )
+            )
+
+
+class SubmitProofModal(discord.ui.Modal, title="📎 Предоставление доказательств"):
+    def __init__(self, bot: commands.Bot, punish_id: int, punishment: dict):
+        super().__init__()
+        self.bot = bot
+        self.punish_id = punish_id
+        self.punishment = punishment
+
+        self.url_input = discord.ui.TextInput(
+            label="Ссылка на скриншот / видеозапись",
+            style=discord.TextStyle.short,
+            placeholder="https://imgur.com/... или https://youtu.be/...",
+            min_length=7,
+            max_length=250,
+            required=True,
+        )
+        self.comment_input = discord.ui.TextInput(
+            label="Комментарий / Пункт правил / Таймкод",
+            style=discord.TextStyle.paragraph,
+            placeholder="Пункт 2.4 (оскорбления), таймкод 0:35...",
+            min_length=0,
+            max_length=400,
+            required=False,
+        )
+        self.add_item(self.url_input)
+        self.add_item(self.comment_input)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        proof_url = self.url_input.value.strip()
+        comment = self.comment_input.value.strip()
+
+        if not re.match(r"^https?://[^\s/$.?#].[^\s]*$", proof_url, re.IGNORECASE):
+            await interaction.response.send_message(
+                "❌ Пожалуйста, укажите корректную ссылку на доказательства (начинающуюся с `http://` или `https://`).",
+                ephemeral=True,
+            )
+            return
+
+        guild = interaction.guild or (self.bot.guilds[0] if self.bot.guilds else None)
+        guild_id = guild.id if guild else int(self.punishment.get("guild_id", 0))
+
+        await db.submit_punishment_proof(self.punish_id, guild_id, proof_url, comment)
+
+        # Update original message if interaction occurred in guild channel
+        try:
+            msg = interaction.message
+            if msg and msg.embeds:
+                orig_embed = msg.embeds[0]
+                new_embed = orig_embed.copy()
+                new_embed.add_field(
+                    name="📎 Предоставленные доказательства",
+                    value=f"[Нажмите для просмотра записи/скриншота]({proof_url})\n*{comment or 'Без комментария'}*",
+                    inline=False,
+                )
+                done_view = PunishmentProofDoneView(proof_url)
+                await msg.edit(embed=new_embed, view=done_view)
+        except Exception as e:
+            logger.warning(f"Could not edit message with proof: {e}")
+
+        # Post audit embed to Curators channel
+        if guild:
+            target_nick = self.punishment.get("target_nick", "Unknown")
+            mod_nick = self.punishment.get("moderator_nick", "Unknown")
+            p_type = self.punishment.get("punishment_type", "НАКАЗАНИЕ")
+            audit_embed = create_security_embed(
+                title="✅ ПРЕДОСТАВЛЕНЫ ДОКАЗАТЕЛЬСТВА",
+                description=(
+                    f"👤 **Модератор:** `{mod_nick}` ({interaction.user.mention})\n"
+                    f"🎯 **Игрок:** `{target_nick}`\n"
+                    f"⚡ **Наказание:** `{p_type}`\n"
+                    f"🔗 **Доказательства:** [Смотреть материалы]({proof_url})\n"
+                    f"📝 **Комментарий:** `{comment or 'Отсутствует'}`"
+                ),
+                color=COLOR_SUCCESS,
+            )
+            await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+
+        await interaction.response.send_message(
+            f"✅ Доказательства по наказанию `#{self.punish_id}` успешно сохранены и отправлены на проверку.",
+            ephemeral=True,
+        )
+
+
+# =========================================================================
 # MAIN STAFF COG
 # =========================================================================
 class StaffCog(commands.Cog, name="Staff"):
@@ -1718,8 +1854,6 @@ class StaffCog(commands.Cog, name="Staff"):
 
                     # 1.3 Insert into punishment_logs table
                     audit_req = 0
-                    if is_valid_for_stats == 1 and punishment_type == "BAN" and random.random() < SPOT_CHECK_PROBABILITY:
-                        audit_req = 1
 
                     punish_id = await db.log_punishment(
                         guild_id=guild_id,
@@ -1760,32 +1894,7 @@ class StaffCog(commands.Cog, name="Staff"):
                         )
                         await self.bot.send_channel_log(target_guild, CURATORS_AUDIT_CHANNEL_ID, alert_embed)
 
-                    # 1.6 Spot-Check Alert (~8% random chance for valid BAN)
-                    if audit_req == 1 and target_guild:
-                        mod_mention = f"<@{moderator_id}>" if moderator_id else f"`{moderator_nick}`"
-                        spot_embed = create_security_embed(
-                            title="🎲 ВЫБОРОЧНЫЙ АУДИТ НАКАЗАНИЯ",
-                            description=(
-                                f"👤 **Модератор:** {mod_mention} (`{moderator_nick}`)\n"
-                                f"🔨 **Наказан:** `{target_nick}`\n"
-                                f"📌 **Причина:** `{reason}`\n"
-                                f"⏳ **Срок:** `{dur_text}`\n\n"
-                                f"⚠️ **Требование:** Модератор обязан предоставить доказательства (скриншот/видео) в течение 24 часов."
-                            ),
-                            color=COLOR_WARNING,
-                        )
-                        await self.bot.send_channel_log(target_guild, CURATORS_AUDIT_CHANNEL_ID, spot_embed)
-
-                        # DM to moderator if found
-                        if moderator_id:
-                            mod_user = target_guild.get_member(moderator_id)
-                            if mod_user:
-                                try:
-                                    await mod_user.send(embed=spot_embed)
-                                except Exception:
-                                    pass
-
-                    # 1.7 Send to dedicated logging channels
+                    # 1.6 Send to dedicated logging channels (with interactive proof request view for Mute & Ban)
                     if target_guild:
                         status_badge = "✅ Засчитано в статистику" if is_valid_for_stats == 1 else f"❌ Не засчитано ({invalid_reason})"
                         if punishment_type == "MUTE":
@@ -1800,7 +1909,8 @@ class StaffCog(commands.Cog, name="Staff"):
                                 ),
                                 color=COLOR_WARNING if is_valid_for_stats == 1 else COLOR_PRIMARY,
                             )
-                            await self.bot.send_channel_log(target_guild, MUTES_LOG_CHANNEL_ID, mute_embed)
+                            proof_view = PunishmentProofRequestView(punish_id=punish_id) if punish_id else None
+                            await self.bot.send_channel_log(target_guild, MUTES_LOG_CHANNEL_ID, mute_embed, view=proof_view)
 
                         elif punishment_type == "BAN":
                             ban_embed = create_security_embed(
@@ -1814,7 +1924,8 @@ class StaffCog(commands.Cog, name="Staff"):
                                 ),
                                 color=COLOR_DANGER if is_valid_for_stats == 1 else COLOR_PRIMARY,
                             )
-                            await self.bot.send_channel_log(target_guild, BANS_LOG_CHANNEL_ID, ban_embed)
+                            proof_view = PunishmentProofRequestView(punish_id=punish_id) if punish_id else None
+                            await self.bot.send_channel_log(target_guild, BANS_LOG_CHANNEL_ID, ban_embed, view=proof_view)
 
                         elif punishment_type == "WARN":
                             warn_embed = create_security_embed(
@@ -1893,6 +2004,158 @@ class StaffCog(commands.Cog, name="Staff"):
                 await message.delete()
             except Exception:
                 pass
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        """Dynamic interaction listener for punishment proof request & submission buttons."""
+        if interaction.type != discord.InteractionType.component:
+            return
+        if interaction.response.is_done():
+            return
+        custom_id = interaction.data.get("custom_id", "")
+        if not custom_id:
+            return
+
+        # ---------------------------------------------------------------------
+        # 1. REQUEST PROOF BUTTON (Curators, Admins, Higher Admins, Head Moders, 'Отвечает | Staff')
+        # ---------------------------------------------------------------------
+        if custom_id.startswith("flory_req_proof:"):
+            if not isinstance(interaction.user, discord.Member) or not can_request_punishment_proof(interaction.user):
+                await interaction.response.send_message(
+                    "❌ У вас нет прав запрашивать доказательства по данному наказанию.\n"
+                    "Данное действие доступно только Кураторам, Администрации, Гл. Модераторам и сотрудникам с ролью `Отвечает | Staff`.",
+                    ephemeral=True,
+                )
+                return
+
+            try:
+                punish_id = int(custom_id.split(":")[1])
+            except (IndexError, ValueError):
+                await interaction.response.send_message("❌ Некорректный ID наказания.", ephemeral=True)
+                return
+
+            guild_id = interaction.guild.id if interaction.guild else (self.bot.guilds[0].id if self.bot.guilds else 0)
+            punishment = await db.get_punishment_by_id(punish_id, guild_id)
+            if not punishment:
+                await interaction.response.send_message("❌ Запись о наказании не найдена в базе данных.", ephemeral=True)
+                return
+
+            # Check if proof already requested
+            if punishment.get("audit_requested") and punishment.get("proof_requested_by"):
+                req_by = punishment.get("proof_requested_by")
+                await interaction.response.send_message(
+                    f"⚠️ Доказательства по данному наказанию уже были запрошены ранее (<@{req_by}>).",
+                    ephemeral=True,
+                )
+                return
+
+            # Persist proof request in database
+            await db.request_punishment_proof(punish_id, guild_id, interaction.user.id)
+
+            # Update original log message in-place
+            msg = interaction.message
+            if msg and msg.embeds:
+                orig_embed = msg.embeds[0]
+                new_embed = orig_embed.copy()
+                new_embed.add_field(
+                    name="❓ Запрос доказательств",
+                    value=f"Запросил: {interaction.user.mention}\nСтатус: ⏳ Ожидание материалов от модератора",
+                    inline=False,
+                )
+                await msg.edit(embed=new_embed, view=PunishmentProofSubmitView(punish_id))
+
+            await interaction.response.send_message(
+                f"✅ Вы успешно запросили доказательства по наказанию `#{punish_id}`.",
+                ephemeral=True,
+            )
+
+            # Retrieve punishment details
+            mod_id = int(punishment.get("moderator_id") or 0)
+            mod_nick = punishment.get("moderator_nick", "Unknown")
+            target_nick = punishment.get("target_nick", "Unknown")
+            p_type = punishment.get("punishment_type", "НАКАЗАНИЕ")
+            reason = punishment.get("reason", "Без причины")
+            guild = interaction.guild or (self.bot.guilds[0] if self.bot.guilds else None)
+
+            # Lookup Discord ID from staff stats by nickname if not present
+            if not mod_id and guild:
+                staff_row = await db.get_staff_stats(guild.id, 0, fallback_nicks=[mod_nick])
+                if staff_row and staff_row.get("user_id"):
+                    mod_id = int(staff_row["user_id"])
+
+            # Send private message to moderator if found
+            if guild and mod_id:
+                mod_member = guild.get_member(mod_id)
+                if mod_member:
+                    dm_embed = create_security_embed(
+                        title="⚠️ ЗАПРОС ДОКАЗАТЕЛЬСТВ ПО НАКАЗАНИЮ",
+                        description=(
+                            f"Здравствуйте, {mod_member.mention}!\n\n"
+                            f"Куратор / Администратор {interaction.user.mention} запросил у вас доказательства (видеозапись или скриншот) по выданному наказанию:\n"
+                            f"⚡ **Тип:** `{p_type}` (ID: `#{punish_id}`)\n"
+                            f"🎯 **Игрок:** `{target_nick}`\n"
+                            f"📌 **Причина:** `{reason}`\n\n"
+                            f"Нажмите на кнопку ниже, чтобы отправить ссылку на доказательства."
+                        ),
+                        color=COLOR_WARNING,
+                    )
+                    try:
+                        await mod_member.send(embed=dm_embed, view=PunishmentProofSubmitView(punish_id))
+                    except Exception as dm_err:
+                        logger.warning(f"Could not send DM to moderator {mod_id}: {dm_err}")
+
+            # Send audit notification to CURATORS_AUDIT_CHANNEL_ID (1391723887846490224)
+            if guild:
+                mod_mention = f"<@{mod_id}>" if mod_id else f"`{mod_nick}`"
+                curators_embed = create_security_embed(
+                    title="❓ ЗАПРОШЕНЫ ДОКАЗАТЕЛЬСТВА",
+                    description=(
+                        f"👮 **Запросил:** {interaction.user.mention}\n"
+                        f"👤 **Модератор:** {mod_mention} (`{mod_nick}`)\n"
+                        f"🎯 **Игрок:** `{target_nick}`\n"
+                        f"⚡ **Наказание:** `{p_type}` (ID: `#{punish_id}`)\n"
+                        f"📌 **Причина:** `{reason}`"
+                    ),
+                    color=COLOR_WARNING,
+                )
+                await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, curators_embed)
+
+        # ---------------------------------------------------------------------
+        # 2. SUBMIT PROOF BUTTON (Moderator who issued punishment or Staff Management)
+        # ---------------------------------------------------------------------
+        elif custom_id.startswith("flory_submit_proof:"):
+            try:
+                punish_id = int(custom_id.split(":")[1])
+            except (IndexError, ValueError):
+                await interaction.response.send_message("❌ Некорректный ID наказания.", ephemeral=True)
+                return
+
+            guild_id = interaction.guild.id if interaction.guild else (self.bot.guilds[0].id if self.bot.guilds else 0)
+            punishment = await db.get_punishment_by_id(punish_id, guild_id)
+            if not punishment:
+                await interaction.response.send_message("❌ Запись о наказании не найдена в базе данных.", ephemeral=True)
+                return
+
+            mod_id = int(punishment.get("moderator_id") or 0)
+            mod_nick = punishment.get("moderator_nick", "Unknown")
+            is_mod = (interaction.user.id == mod_id)
+            is_staff_mgmt = isinstance(interaction.user, discord.Member) and can_request_punishment_proof(interaction.user)
+
+            if not is_mod and not is_staff_mgmt:
+                # Check if current user is linked to moderator nick
+                staff_row = await db.get_staff_stats(guild_id, interaction.user.id, fallback_nicks=[mod_nick])
+                if staff_row and (staff_row.get("minecraft_nick") or "").lower() == mod_nick.lower():
+                    is_mod = True
+
+            if not is_mod and not is_staff_mgmt:
+                await interaction.response.send_message(
+                    "❌ Только модератор, выдавший наказание, или руководство стаффа может прикрепить доказательства.",
+                    ephemeral=True,
+                )
+                return
+
+            modal = SubmitProofModal(bot=self.bot, punish_id=punish_id, punishment=punishment)
+            await interaction.response.send_modal(modal)
 
     async def _ingest_pending_sync_messages(self, guild: discord.Guild):
         """Checks the guild log channel for any unprocessed __FLORY_SYNC__ packets."""

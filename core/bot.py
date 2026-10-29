@@ -167,7 +167,13 @@ class FloryGuardBot(commands.Bot):
         except Exception as e:
             logger.error(f"Failed to send security log in {guild.name}: {e}")
 
-    async def send_channel_log(self, guild: discord.Guild, channel_id: int, embed: discord.Embed) -> bool:
+    async def send_channel_log(
+        self,
+        guild: discord.Guild,
+        channel_id: int,
+        embed: discord.Embed,
+        view: Optional[discord.ui.View] = None,
+    ) -> Optional[discord.Message]:
         """Send embed to a specific designated channel by ID with full error handling and text fallback."""
         try:
             ch = guild.get_channel(channel_id)
@@ -181,12 +187,15 @@ class FloryGuardBot(commands.Bot):
                 perms = ch.permissions_for(guild.me)
                 if not perms.send_messages:
                     logger.warning(f"Bot lacks Send Messages permission in channel {channel_id} in {guild.name}")
-                    return False
+                    return None
+
+                send_kwargs = {}
+                if view:
+                    send_kwargs["view"] = view
 
                 if perms.embed_links:
                     try:
-                        await ch.send(embed=embed)
-                        return True
+                        return await ch.send(embed=embed, **send_kwargs)
                     except Exception as embed_err:
                         logger.warning(f"Failed to send embed to {channel_id}, trying text fallback: {embed_err}")
 
@@ -199,13 +208,12 @@ class FloryGuardBot(commands.Bot):
                 full_text = f"{title}{desc}{fields_text}".strip()
                 if not full_text:
                     full_text = "Детали события отсутствуют."
-                await ch.send(content=full_text[:2000])
-                return True
+                return await ch.send(content=full_text[:2000], **send_kwargs)
             else:
                 logger.warning(f"Could not resolve text channel for ID {channel_id} in {guild.name}")
         except Exception as e:
             logger.error(f"Failed to send log to channel {channel_id} in {guild.name}: {e}")
-        return False
+        return None
 
     async def quarantine_member(self, guild: discord.Guild, member: discord.Member, reason: str) -> bool:
         """

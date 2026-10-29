@@ -128,7 +128,7 @@ TRUSTED_BOT_IDS = {
 # Punishment validation thresholds
 MUTE_MIN_VALID_SECONDS = 15 * 60  # 15 minutes (900 seconds)
 BAN_MIN_VALID_SECONDS = 7 * 86400  # 7 days (604800 seconds)
-SPOT_CHECK_PROBABILITY = 0.08  # ~8% chance for random audit on valid bans
+SPOT_CHECK_PROBABILITY = 0.0  # Random spot checks excluded (proof requested via interactive buttons)
 
 # Attestation module configuration
 _ATTESTATION_CFG = CONFIG.get("attestation", {})

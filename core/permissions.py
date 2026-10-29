@@ -134,6 +134,31 @@ def can_unblock_attestation(member: discord.Member) -> bool:
     return 1391723885900333214 in member_role_ids
 
 
+CAN_REQUEST_PROOF_ROLE_IDS = {
+    1391723885900333214,  # Высшая Администрация
+    1548646933101420564,  # Администрация
+    1550434344588288030,  # Разработчик
+    1555624705342308403,  # Скрытая Админка
+    1544022496934756482,  # Руководитель
+    1454703503292502155,  # Куратор
+    1548961652899061841,  # Гл. Модер | Зам. Куратора
+    1454703598834421831,  # Отвечает | Staff (WARN_ACCESS_ROLE_ID)
+}
+
+
+def can_request_punishment_proof(member: discord.Member) -> bool:
+    """
+    Checks if member can request proof for bans/mutes:
+    Available strictly for Curators, Admins, Senior Admins/Owner, Head Moderators (Гл. Модер),
+    and anyone with role 'Отвечает | Staff' (1454703598834421831).
+    """
+    guild_id = member.guild.id if member.guild else None
+    if is_higher_admin(member.id, guild_id):
+        return True
+    member_roles = {r.id for r in member.roles}
+    return bool(member_roles & CAN_REQUEST_PROOF_ROLE_IDS)
+
+
 
 def check_moderation_channel(interaction: discord.Interaction) -> Tuple[bool, Optional[str]]:
     """

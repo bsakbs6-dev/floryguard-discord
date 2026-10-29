@@ -156,9 +156,27 @@ class Database:
                     duration_seconds INTEGER DEFAULT 0,
                     is_valid_for_stats INTEGER DEFAULT 1,
                     created_at TIMESTAMP NOT NULL,
-                    audit_requested INTEGER DEFAULT 0
+                    audit_requested INTEGER DEFAULT 0,
+                    proof_url TEXT DEFAULT '',
+                    proof_comment TEXT DEFAULT '',
+                    proof_submitted_at TIMESTAMP,
+                    proof_requested_by INTEGER DEFAULT 0,
+                    proof_requested_at TIMESTAMP
                 );
             """)
+
+            # Safe migration for existing punishment_logs tables
+            for col_sql in (
+                "proof_url TEXT DEFAULT ''",
+                "proof_comment TEXT DEFAULT ''",
+                "proof_submitted_at TIMESTAMP",
+                "proof_requested_by INTEGER DEFAULT 0",
+                "proof_requested_at TIMESTAMP",
+            ):
+                try:
+                    await db.execute(f"ALTER TABLE punishment_logs ADD COLUMN {col_sql}")
+                except Exception:
+                    pass
 
             # Table for Guild Settings override
             await db.execute("""
@@ -752,6 +770,36 @@ class Database:
             await db.execute(
                 "UPDATE punishment_logs SET is_valid_for_stats = 0 WHERE id = ? AND guild_id = ?",
                 (punishment_id, guild_id),
+            )
+            await db.commit()
+            return True
+
+    async def request_punishment_proof(self, punishment_id: int, guild_id: int, requested_by: int) -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                UPDATE punishment_logs
+                SET audit_requested = 1, proof_requested_by = ?, proof_requested_at = ?
+                WHERE id = ? AND guild_id = ?
+                """,
+                (requested_by, now, punishment_id, guild_id),
+            )
+            await db.commit()
+            return True
+
+    async def submit_punishment_proof(
+        self, punishment_id: int, guild_id: int, proof_url: str, comment: str = ""
+    ) -> bool:
+        now = datetime.now(timezone.utc).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                UPDATE punishment_logs
+                SET proof_url = ?, proof_comment = ?, proof_submitted_at = ?
+                WHERE id = ? AND guild_id = ?
+                """,
+                (proof_url, comment, now, punishment_id, guild_id),
             )
             await db.commit()
             return True
