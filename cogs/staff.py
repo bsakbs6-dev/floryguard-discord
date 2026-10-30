@@ -416,6 +416,17 @@ class PromoteConfirmView(discord.ui.View):
             if old_lp_group != new_lp_group:
                 await self.cog._dispatch_mc_command(guild, f"lp user {self.mc_nick} parent remove {old_lp_group}")
 
+        # Update staff_stats and admins in database
+        new_norm_sec = int(STAFF_ROLE_DAILY_NORM_HOURS.get(new_role_id, DEFAULT_DAILY_NORM_HOURS) * 3600)
+        await db.upsert_staff_stats(
+            guild_id=guild.id,
+            user_id=self.target.id,
+            minecraft_nick=self.mc_nick,
+            primary_group=new_lp_group,
+            norm_seconds=new_norm_sec,
+        )
+        await db.add_admin(guild.id, self.target.id, self.invoker.id, title=new_rank_name)
+
         # Send DM notification
         try:
             dm_embed = create_design_embed(
@@ -673,6 +684,17 @@ class DemoteConfirmView(discord.ui.View):
             if old_lp_group != new_lp_group:
                 await self.cog._dispatch_mc_command(guild, f"lp user {self.mc_nick} parent remove {old_lp_group}")
 
+        # Update staff_stats and admins in database
+        new_norm_sec = int(STAFF_ROLE_DAILY_NORM_HOURS.get(new_role_id, DEFAULT_DAILY_NORM_HOURS) * 3600)
+        await db.upsert_staff_stats(
+            guild_id=guild.id,
+            user_id=self.target.id,
+            minecraft_nick=self.mc_nick,
+            primary_group=new_lp_group,
+            norm_seconds=new_norm_sec,
+        )
+        await db.add_admin(guild.id, self.target.id, self.invoker.id, title=new_rank_name)
+
         # Send DM notification
         try:
             dm_embed = create_design_embed(
@@ -837,6 +859,11 @@ class FireConfirmView(discord.ui.View):
         if self.mc_nick:
             for grp in set(ROLE_ID_TO_MC_GROUP.values()):
                 await self.cog._dispatch_mc_command(guild, f"lp user {self.mc_nick} parent remove {grp}")
+
+        # Update database: remove admin and clear primary_group
+        await db.remove_admin(guild.id, self.target.id)
+        await db.upsert_staff_stats(guild.id, self.target.id, primary_group="")
+        await db.log_security_event(guild.id, self.target.id, "STAFF_FIRED", f"Снят со стаффа куратором {self.invoker.display_name}: {self.reason_text}")
 
         # Send DM notification
         try:
@@ -3076,10 +3103,49 @@ class StaffCog(commands.Cog, name="Staff"):
                 rank_name = mc_rank_name
                 max_warns = TRAINEE_MAX_WARNS if mc_role_id == TRAINEE_ROLE_ID else DEFAULT_STAFF_MAX_WARNS
                 role_norm_seconds = int(STAFF_ROLE_DAILY_NORM_HOURS.get(mc_role_id, 3.0) * 3600)
-                target_idx = 7 if mc_role_id == TRAINEE_ROLE_ID else 5
+                target_idx = next((idx for idx, (r_id, _) in enumerate(STAFF_HIERARCHY) if r_id == mc_role_id), (7 if mc_role_id == TRAINEE_ROLE_ID else 5))
+            elif rank_name == "Участник":
+                # Check admins table in DB
+                admin_rec = await db.get_admin(interaction.guild.id, target.id)
+                adm_role = admin_rec.get("title") or admin_rec.get("role") if admin_rec else None
+                if adm_role:
+                    found_idx = next((idx for idx, (_, r_name) in enumerate(STAFF_HIERARCHY) if r_name.lower() == adm_role.lower()), None)
+                    if found_idx is not None:
+                        r_id, r_name = STAFF_HIERARCHY[found_idx]
+                        rank_name = r_name
+                        target_idx = found_idx
+                        max_warns = TRAINEE_MAX_WARNS if r_id == TRAINEE_ROLE_ID else DEFAULT_STAFF_MAX_WARNS
+                        role_norm_seconds = int(STAFF_ROLE_DAILY_NORM_HOURS.get(r_id, 3.0) * 3600)
+                else:
+                    # Check if candidate passed attestation in DB
+                    passed_att = await db.get_latest_passed_attestation(interaction.guild.id, target.id)
+                    if passed_att:
+                        att_role_id = int(passed_att.get("target_role_id", 0))
+                        att_role_name = passed_att.get("target_role_name", "Стажер")
+                        found_idx = next((idx for idx, (r_id, _) in enumerate(STAFF_HIERARCHY) if r_id == att_role_id), 7)
+                        rank_name = att_role_name
+                        target_idx = found_idx
+                        max_warns = TRAINEE_MAX_WARNS if att_role_id == TRAINEE_ROLE_ID else DEFAULT_STAFF_MAX_WARNS
+                        role_norm_seconds = int(STAFF_ROLE_DAILY_NORM_HOURS.get(att_role_id, 3.0) * 3600)
 
             is_staff = (not target.bot) and (rank_name != "Участник") and (target_idx < 100)
             is_trainee = is_staff and ((rank_name == "Стажер") or (target_idx == 7) or (max_warns == TRAINEE_MAX_WARNS))
+
+        # Auto-heal missing Discord roles for staff
+        if is_staff and 0 <= target_idx < len(STAFF_HIERARCHY) and interaction.guild.me.guild_permissions.manage_roles:
+            exp_role_id = STAFF_HIERARCHY[target_idx][0]
+            exp_role = interaction.guild.get_role(exp_role_id)
+            st_acc = interaction.guild.get_role(STAFF_ACCESS_ROLE_ID)
+            heal_roles = []
+            if exp_role and exp_role not in target.roles and interaction.guild.me.top_role > exp_role:
+                heal_roles.append(exp_role)
+            if st_acc and st_acc not in target.roles and interaction.guild.me.top_role > st_acc:
+                heal_roles.append(st_acc)
+            if heal_roles:
+                try:
+                    await target.add_roles(*heal_roles, reason="Авто-восстановление ролей персонала FloryGuard")
+                except Exception:
+                    pass
 
         active_warns = await db.get_active_warn_count(interaction.guild.id, target.id) if is_staff else 0
 
@@ -3120,10 +3186,10 @@ class StaffCog(commands.Cog, name="Staff"):
         )
         online_seconds = int(stats.get("online_seconds", 0)) if stats else 0
         norm_seconds = int(stats["norm_seconds"]) if (stats and stats.get("norm_seconds")) else role_norm_seconds
-        warns_issued = int(stats.get("warns_issued") or 0) if (stats and is_staff) else (0 if is_staff else None)
-        bans_issued = int(stats.get("bans_issued") or 0) if (stats and is_staff) else (0 if is_staff else None)
-        reports_accepted = int(stats.get("reports_accepted") or 0) if (stats and is_staff) else (0 if is_staff else None)
-        mutes_issued = int(stats.get("mutes_issued") or 0) if (stats and is_staff) else (0 if is_staff else None)
+        warns_issued = int(stats.get("warns_issued") or 0) if is_staff else None
+        bans_issued = int(stats.get("bans_issued") or 0) if is_staff else None
+        reports_accepted = int(stats.get("reports_accepted") or 0) if is_staff else None
+        mutes_issued = int(stats.get("mutes_issued") or 0) if is_staff else None
 
         # 3. Download user's Discord avatar
         avatar_bytes = None
@@ -3388,10 +3454,18 @@ class StaffCog(commands.Cog, name="Staff"):
         else:
             norm_sec = None
 
+        # Auto-detect target group from user's rank
+        rank_name_curr, _, _, rank_idx_curr = get_member_staff_rank(user)
+        target_group = None
+        if 0 <= rank_idx_curr < len(STAFF_HIERARCHY):
+            target_role_id = STAFF_HIERARCHY[rank_idx_curr][0]
+            target_group = ROLE_ID_TO_MC_GROUP.get(target_role_id)
+
         await db.upsert_staff_stats(
             guild_id=interaction.guild.id,
             user_id=user.id,
             minecraft_nick=minecraft_nick,
+            primary_group=target_group,
             online_seconds=online_sec,
             norm_seconds=norm_sec,
             warns_issued=warns_issued,
@@ -3399,6 +3473,9 @@ class StaffCog(commands.Cog, name="Staff"):
             reports_accepted=reports_accepted,
             mutes_issued=mutes_issued,
         )
+
+        if rank_name_curr != "Участник":
+            await db.add_admin(interaction.guild.id, user.id, interaction.user.id, title=rank_name_curr)
 
         embed = create_security_embed(
             title="⚡ ДАННЫЕ СОТРУДНИКА ОБНОВЛЕНЫ",

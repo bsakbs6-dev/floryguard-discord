@@ -677,7 +677,7 @@ class AttestationPassModal(discord.ui.Modal, title="✅ Успешное про�
             label="Minecraft Никнейм кандидата",
             style=discord.TextStyle.short,
             default=mc_nick if mc_nick and mc_nick != candidate.name else "",
-            placeholder="Никнейм в игре для выдачи привилегий",
+            placeholder="Игровой ник принимаемого сотрудника (НЕ куратора)",
             min_length=3,
             max_length=20,
             required=True,
@@ -703,6 +703,21 @@ class AttestationPassModal(discord.ui.Modal, title="✅ Успешное про�
         final_nick = self.nick_input.value.strip()
         comment = self.comment_input.value.strip()
 
+        # Validation: prevent curator from mistakenly giving the rank to themselves
+        if (
+            self.candidate.id != self.invoker.id
+            and (
+                final_nick.lower() == self.invoker.name.lower()
+                or (self.invoker.id in HIGHER_ADMIN_IDS and final_nick.lower() == "devil_first_more")
+            )
+        ):
+            await interaction.followup.send(
+                "❌ **Ошибка:** Вы указали собственный никнейм куратора / администратора (`Devil_First_More`)!\n"
+                "В поле *'Minecraft Никнейм кандидата'* нужно указать игровой никнейм самого кандидата, которого вы принимаете в персонал.",
+                ephemeral=True,
+            )
+            return
+
         # 1. Update DB attestation record & reset candidate fail counter
         await db.set_attestation_result(att_id, "PASSED", comment)
         await db.reset_candidate_fails(guild.id, self.candidate.id)
@@ -711,75 +726,148 @@ class AttestationPassModal(discord.ui.Modal, title="✅ Успешное про�
         await revoke_attestation_voice_access(guild, voice_id, self.candidate)
 
         # 3. Role assignment & rotation in Discord
+        candidate_member = guild.get_member(self.candidate.id)
+        if not candidate_member:
+            try:
+                candidate_member = await guild.fetch_member(self.candidate.id)
+            except Exception:
+                candidate_member = self.candidate
+
         target_role = guild.get_role(target_role_id)
         staff_access_role = guild.get_role(STAFF_ACCESS_ROLE_ID)
+        if not target_role or not staff_access_role:
+            try:
+                await guild.fetch_roles()
+                target_role = guild.get_role(target_role_id)
+                staff_access_role = guild.get_role(STAFF_ACCESS_ROLE_ID)
+            except Exception:
+                pass
+
         roles_to_add = []
-        if target_role and target_role not in self.candidate.roles:
+        if target_role and target_role not in candidate_member.roles:
             roles_to_add.append(target_role)
-        if staff_access_role and staff_access_role not in self.candidate.roles:
+        if staff_access_role and staff_access_role not in candidate_member.roles:
             roles_to_add.append(staff_access_role)
 
         # Remove lower staff roles
         roles_to_remove = []
         target_idx = next((idx for idx, (r_id, _) in enumerate(STAFF_HIERARCHY) if r_id == target_role_id), 999)
-        for r in self.candidate.roles:
+        for r in candidate_member.roles:
             for idx, (h_id, _) in enumerate(STAFF_HIERARCHY):
                 if r.id == h_id and idx > target_idx:
                     roles_to_remove.append(r)
 
-        try:
-            if roles_to_remove:
-                await self.candidate.remove_roles(*roles_to_remove, reason=f"Аттестация сдана: повышение до {target_role_name}")
-            if roles_to_add:
-                await self.candidate.add_roles(*roles_to_add, reason=f"Аттестация сдана: назначение {target_role_name}")
-        except Exception as e:
-            logger.error(f"Error updating Discord roles for candidate {self.candidate.id}: {e}")
+        role_warning = None
+        bot_member = guild.me
+        if not bot_member.guild_permissions.manage_roles:
+            role_warning = "У бота нет права 'Управление ролями' (Manage Roles)!"
+            logger.error(f"Cannot assign roles for {candidate_member.id}: Bot lacks manage_roles permission")
+        elif any(r >= bot_member.top_role for r in roles_to_add):
+            role_warning = f"Роль бота ({bot_member.top_role.name}) находится ниже назначаемой роли персонала в иерархии Discord!"
+            logger.error(f"Cannot assign roles for {candidate_member.id}: Role hierarchy issue ({role_warning})")
+        else:
+            try:
+                if roles_to_remove:
+                    await candidate_member.remove_roles(*roles_to_remove, reason=f"Аттестация сдана: повышение до {target_role_name}")
+                if roles_to_add:
+                    await candidate_member.add_roles(*roles_to_add, reason=f"Аттестация сдана: назначение {target_role_name}")
+            except Exception as e:
+                logger.error(f"Error updating Discord roles for candidate {candidate_member.id}: {e}")
+                role_warning = f"Ошибка Discord при выдаче ролей: {e}"
 
         # 4. Sync LuckPerms Minecraft group
         new_lp_group = ROLE_ID_TO_MC_GROUP.get(target_role_id, "intern")
         if hasattr(self.cog, "_dispatch_mc_command"):
             await self.cog._dispatch_mc_command(guild, f"lp user {final_nick} parent add {new_lp_group}")
 
-        # 5. Send DM to Candidate
+        # 5. Save Staff Member into Database (staff_stats, admins table & security log)
+        daily_norm_sec = int(STAFF_ROLE_DAILY_NORM_HOURS.get(target_role_id, DEFAULT_DAILY_NORM_HOURS) * 3600)
+        existing_by_nick = await db.get_staff_stats(guild.id, 0, fallback_nicks=[final_nick])
+        on_sec = existing_by_nick.get("online_seconds", 0) if existing_by_nick else 0
+        w_iss = existing_by_nick.get("warns_issued", 0) if existing_by_nick else 0
+        b_iss = existing_by_nick.get("bans_issued", 0) if existing_by_nick else 0
+        r_acc = existing_by_nick.get("reports_accepted", 0) if existing_by_nick else 0
+        m_iss = existing_by_nick.get("mutes_issued", 0) if existing_by_nick else 0
+
+        await db.upsert_staff_stats(
+            guild_id=guild.id,
+            user_id=candidate_member.id,
+            minecraft_nick=final_nick,
+            primary_group=new_lp_group,
+            online_seconds=on_sec,
+            norm_seconds=daily_norm_sec,
+            warns_issued=w_iss,
+            bans_issued=b_iss,
+            reports_accepted=r_acc,
+            mutes_issued=m_iss,
+        )
+
+        await db.add_admin(
+            guild_id=guild.id,
+            user_id=candidate_member.id,
+            added_by=self.invoker.id,
+            title=target_role_name,
+        )
+
+        await db.log_security_event(
+            guild.id,
+            candidate_member.id,
+            "STAFF_HIRED",
+            f"Аттестация сдана куратору {self.invoker.display_name}. Назначена должность {target_role_name} (MC: {final_nick}, LP: {new_lp_group})",
+        )
+
+        # 6. Send DM to Candidate
         try:
             pass_embed = attestation_result_dm_embed(
-                candidate=self.candidate,
+                candidate=candidate_member,
                 curator=self.invoker,
                 target_role_name=target_role_name,
                 status="PASSED",
                 reason=comment,
             )
-            await self.candidate.send(embed=pass_embed)
+            await candidate_member.send(embed=pass_embed)
         except Exception:
             pass
 
-        # 6. Post to Curators Audit Channel
+        # 7. Post to Curators Audit Channel
         try:
+            audit_details = (
+                f"MC Ник: `{final_nick}`\n"
+                f"LP Группа: `{new_lp_group}`\n"
+                f"Отзыв: {comment or 'Без замечаний'}"
+            )
+            if role_warning:
+                audit_details += f"\n⚠️ **Внимание Discord:** {role_warning}"
+
             audit_embed = attestation_audit_embed(
                 action_title="🎉 АТТЕСТАЦИЯ УСПЕШНО СДАНА",
-                candidate=self.candidate,
+                candidate=candidate_member,
                 curator=self.invoker,
                 target_role_name=target_role_name,
                 voice_channel=guild.get_channel(voice_id),
                 scheduled_dt=None,
                 status_text="PASSED (Сдана)",
                 color=COLOR_SUCCESS,
-                details=f"MC Ник: `{final_nick}`\nLP Группа: `{new_lp_group}`\nОтзыв: {comment or 'Без замечаний'}",
+                details=audit_details,
             )
             await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
         except Exception as e:
             logger.error(f"Failed to post pass audit: {e}")
 
+        success_desc = (
+            f"Сотрудник {candidate_member.mention} успешно аттестован!\n\n"
+            f"🏷️ **Должность:** **{target_role_name}**\n"
+            f"🎮 **Minecraft Ник:** `{final_nick}`\n"
+            f"⚡ **LuckPerms:** `lp user {final_nick} parent add {new_lp_group}`\n"
+            f"🛡️ **Временные права:** аннулированы из войса."
+        )
+        if role_warning:
+            success_desc += f"\n\n⚠️ **Внимание:** {role_warning}\n*Пожалуйста, выдайте роль `{target_role_name}` вручную в Discord или поднимите роль бота выше.*"
+
         success_embed = _create_design_embed(
             title="🎉 АТТЕСТАЦИЯ УСПЕШНО ПРИНЯТА",
-            description=(
-                f"Сотрудник {self.candidate.mention} успешно аттестован!\n\n"
-                f"🏷️ **Должность:** **{target_role_name}**\n"
-                f"🎮 **Minecraft Ник:** `{final_nick}`\n"
-                f"⚡ **LuckPerms:** `lp user {final_nick} parent add {new_lp_group}`\n"
-                f"🛡️ **Временные права:** аннулированы из войса."
-            ),
-            color=COLOR_SUCCESS,
+            description=success_desc,
+            color=COLOR_SUCCESS if not role_warning else COLOR_WARNING,
         )
         await interaction.followup.send(embed=success_embed, ephemeral=True)
 

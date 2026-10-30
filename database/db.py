@@ -1036,6 +1036,22 @@ class Database:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
 
+    async def get_latest_passed_attestation(
+        self, guild_id: int, candidate_id: int
+    ) -> Optional[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT * FROM attestations 
+                WHERE guild_id = ? AND candidate_id = ? AND status = 'PASSED'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (guild_id, candidate_id),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
     async def get_attestation_by_id(self, attestation_id: int) -> Optional[Dict[str, Any]]:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
