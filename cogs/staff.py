@@ -3109,6 +3109,39 @@ class StaffCog(commands.Cog, name="Staff"):
                 # Check admins table in DB
                 admin_rec = await db.get_admin(interaction.guild.id, target.id)
                 adm_role = admin_rec.get("title") or admin_rec.get("role") if admin_rec else None
+                if not adm_role:
+                    # Auto-heal: Check if candidate has a passed attestation in DB that wasn't finalized
+                    passed_att = await db.get_latest_passed_attestation(interaction.guild.id, target.id)
+                    if passed_att and passed_att.get("target_role_name"):
+                        adm_role = passed_att["target_role_name"]
+                        try:
+                            await db.add_admin(
+                                guild_id=interaction.guild.id,
+                                user_id=target.id,
+                                added_by=int(passed_att.get("curator_id", interaction.user.id)),
+                                title=adm_role,
+                            )
+                            t_role_id = int(passed_att.get("target_role_id", TRAINEE_ROLE_ID))
+                            lp_grp = ROLE_ID_TO_MC_GROUP.get(t_role_id, "intern")
+                            d_norm = int(STAFF_ROLE_DAILY_NORM_HOURS.get(t_role_id, DEFAULT_DAILY_NORM_HOURS) * 3600)
+                            cand_nick = (
+                                (stats.get("minecraft_nick") if stats and stats.get("minecraft_nick") else None)
+                                or passed_att.get("candidate_nick")
+                                or target.name
+                            )
+                            await db.upsert_staff_stats(
+                                guild_id=interaction.guild.id,
+                                user_id=target.id,
+                                minecraft_nick=cand_nick,
+                                primary_group=lp_grp,
+                                online_seconds=0,
+                                norm_seconds=d_norm,
+                            )
+                            # Re-fetch stats so card has them immediately
+                            stats = await db.get_staff_stats(interaction.guild.id, target.id)
+                        except Exception as e:
+                            logger.error(f"Error auto-healing passed attestation in staff-profile: {e}")
+
                 if adm_role:
                     found_idx = next((idx for idx, (_, r_name) in enumerate(STAFF_HIERARCHY) if r_name.lower() == adm_role.lower()), None)
                     if found_idx is not None:

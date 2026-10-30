@@ -16,6 +16,8 @@ from config import (
     ROLE_ID_TO_MC_GROUP,
     AUTHORIZED_GUILDS,
     HIGHER_ADMIN_IDS,
+    STAFF_ROLE_DAILY_NORM_HOURS,
+    DEFAULT_DAILY_NORM_HOURS,
 )
 from core.permissions import (
     is_authorized_guild,
@@ -644,6 +646,12 @@ class AttestationVerdictView(discord.ui.View):
         except Exception as e:
             logger.error(f"Failed to post cancel audit: {e}")
 
+        try:
+            if interaction.message:
+                await interaction.message.edit(view=None)
+        except Exception:
+            pass
+
         embed = _create_design_embed(
             title="🛑 АТТЕСТАЦИЯ ОТМЕНЕНА",
             description=(
@@ -693,183 +701,199 @@ class AttestationPassModal(discord.ui.Modal, title="✅ Успешное про�
         self.add_item(self.comment_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
-        guild = interaction.guild
-        att_id = int(self.attestation["id"])
-        target_role_id = int(self.attestation["target_role_id"])
-        target_role_name = self.attestation["target_role_name"]
-        voice_id = int(self.attestation["voice_channel_id"])
-        final_nick = self.nick_input.value.strip()
-        comment = self.comment_input.value.strip()
+        try:
+            guild = interaction.guild
+            att_id = int(self.attestation["id"])
+            target_role_id = int(self.attestation["target_role_id"])
+            target_role_name = self.attestation["target_role_name"]
+            voice_id = int(self.attestation["voice_channel_id"])
+            final_nick = self.nick_input.value.strip()
+            comment = self.comment_input.value.strip()
 
-        # Validation: prevent curator from mistakenly giving the rank to themselves
-        if (
-            self.candidate.id != self.invoker.id
-            and (
-                final_nick.lower() == self.invoker.name.lower()
-                or (self.invoker.id in HIGHER_ADMIN_IDS and final_nick.lower() == "devil_first_more")
-            )
-        ):
-            await interaction.followup.send(
-                "❌ **Ошибка:** Вы указали собственный никнейм куратора / администратора (`Devil_First_More`)!\n"
-                "В поле *'Minecraft Никнейм кандидата'* нужно указать игровой никнейм самого кандидата, которого вы принимаете в персонал.",
-                ephemeral=True,
-            )
-            return
-
-        # 1. Update DB attestation record & reset candidate fail counter
-        await db.set_attestation_result(att_id, "PASSED", comment)
-        await db.reset_candidate_fails(guild.id, self.candidate.id)
-
-        # 2. Revoke voice access
-        await revoke_attestation_voice_access(guild, voice_id, self.candidate)
-
-        # 3. Role assignment & rotation in Discord
-        candidate_member = guild.get_member(self.candidate.id)
-        if not candidate_member:
+            # Remove verdict buttons so they cannot be clicked multiple times
             try:
-                candidate_member = await guild.fetch_member(self.candidate.id)
-            except Exception:
-                candidate_member = self.candidate
-
-        target_role = guild.get_role(target_role_id)
-        staff_access_role = guild.get_role(STAFF_ACCESS_ROLE_ID)
-        if not target_role or not staff_access_role:
-            try:
-                await guild.fetch_roles()
-                target_role = guild.get_role(target_role_id)
-                staff_access_role = guild.get_role(STAFF_ACCESS_ROLE_ID)
+                if interaction.message:
+                    await interaction.message.edit(view=None)
             except Exception:
                 pass
 
-        roles_to_add = []
-        if target_role and target_role not in candidate_member.roles:
-            roles_to_add.append(target_role)
-        if staff_access_role and staff_access_role not in candidate_member.roles:
-            roles_to_add.append(staff_access_role)
+            # Validation: prevent curator from mistakenly giving the rank to themselves
+            if (
+                self.candidate.id != self.invoker.id
+                and (
+                    final_nick.lower() == self.invoker.name.lower()
+                    or (self.invoker.id in HIGHER_ADMIN_IDS and final_nick.lower() == "devil_first_more")
+                )
+            ):
+                await interaction.followup.send(
+                    "❌ **Ошибка:** Вы указали собственный никнейм куратора / администратора (`Devil_First_More`)!\n"
+                    "В поле *'Minecraft Никнейм кандидата'* нужно указать игровой никнейм самого кандидата, которого вы принимаете в персонал.",
+                    ephemeral=True,
+                )
+                return
 
-        # Remove lower staff roles
-        roles_to_remove = []
-        target_idx = next((idx for idx, (r_id, _) in enumerate(STAFF_HIERARCHY) if r_id == target_role_id), 999)
-        for r in candidate_member.roles:
-            for idx, (h_id, _) in enumerate(STAFF_HIERARCHY):
-                if r.id == h_id and idx > target_idx:
-                    roles_to_remove.append(r)
+            # 1. Update DB attestation record & reset candidate fail counter
+            await db.set_attestation_result(att_id, "PASSED", comment)
+            await db.reset_candidate_fails(guild.id, self.candidate.id)
 
-        role_warning = None
-        bot_member = guild.me
-        if not bot_member.guild_permissions.manage_roles:
-            role_warning = "У бота нет права 'Управление ролями' (Manage Roles)!"
-            logger.error(f"Cannot assign roles for {candidate_member.id}: Bot lacks manage_roles permission")
-        elif any(r >= bot_member.top_role for r in roles_to_add):
-            role_warning = f"Роль бота ({bot_member.top_role.name}) находится ниже назначаемой роли персонала в иерархии Discord!"
-            logger.error(f"Cannot assign roles for {candidate_member.id}: Role hierarchy issue ({role_warning})")
-        else:
-            try:
-                if roles_to_remove:
-                    await candidate_member.remove_roles(*roles_to_remove, reason=f"Аттестация сдана: повышение до {target_role_name}")
-                if roles_to_add:
-                    await candidate_member.add_roles(*roles_to_add, reason=f"Аттестация сдана: назначение {target_role_name}")
-            except Exception as e:
-                logger.error(f"Error updating Discord roles for candidate {candidate_member.id}: {e}")
-                role_warning = f"Ошибка Discord при выдаче ролей: {e}"
+            # 2. Revoke voice access
+            await revoke_attestation_voice_access(guild, voice_id, self.candidate)
 
-        # 4. Sync LuckPerms Minecraft group
-        new_lp_group = ROLE_ID_TO_MC_GROUP.get(target_role_id, "intern")
-        if hasattr(self.cog, "_dispatch_mc_command"):
-            await self.cog._dispatch_mc_command(guild, f"lp user {final_nick} parent add {new_lp_group}")
+            # 3. Role assignment & rotation in Discord
+            candidate_member = guild.get_member(self.candidate.id)
+            if not candidate_member:
+                try:
+                    candidate_member = await guild.fetch_member(self.candidate.id)
+                except Exception:
+                    candidate_member = self.candidate
 
-        # 5. Save Staff Member into Database (staff_stats, admins table & security log)
-        daily_norm_sec = int(STAFF_ROLE_DAILY_NORM_HOURS.get(target_role_id, DEFAULT_DAILY_NORM_HOURS) * 3600)
-        existing_by_nick = await db.get_staff_stats(guild.id, 0, fallback_nicks=[final_nick])
-        on_sec = existing_by_nick.get("online_seconds", 0) if existing_by_nick else 0
-        w_iss = existing_by_nick.get("warns_issued", 0) if existing_by_nick else 0
-        b_iss = existing_by_nick.get("bans_issued", 0) if existing_by_nick else 0
-        r_acc = existing_by_nick.get("reports_accepted", 0) if existing_by_nick else 0
-        m_iss = existing_by_nick.get("mutes_issued", 0) if existing_by_nick else 0
+            target_role = guild.get_role(target_role_id)
+            staff_access_role = guild.get_role(STAFF_ACCESS_ROLE_ID)
+            if not target_role or not staff_access_role:
+                try:
+                    await guild.fetch_roles()
+                    target_role = guild.get_role(target_role_id)
+                    staff_access_role = guild.get_role(STAFF_ACCESS_ROLE_ID)
+                except Exception:
+                    pass
 
-        await db.upsert_staff_stats(
-            guild_id=guild.id,
-            user_id=candidate_member.id,
-            minecraft_nick=final_nick,
-            primary_group=new_lp_group,
-            online_seconds=on_sec,
-            norm_seconds=daily_norm_sec,
-            warns_issued=w_iss,
-            bans_issued=b_iss,
-            reports_accepted=r_acc,
-            mutes_issued=m_iss,
-        )
+            roles_to_add = []
+            if target_role and hasattr(candidate_member, "roles") and target_role not in candidate_member.roles:
+                roles_to_add.append(target_role)
+            if staff_access_role and hasattr(candidate_member, "roles") and staff_access_role not in candidate_member.roles:
+                roles_to_add.append(staff_access_role)
 
-        await db.add_admin(
-            guild_id=guild.id,
-            user_id=candidate_member.id,
-            added_by=self.invoker.id,
-            title=target_role_name,
-        )
+            # Remove lower staff roles
+            roles_to_remove = []
+            target_idx = next((idx for idx, (r_id, _) in enumerate(STAFF_HIERARCHY) if r_id == target_role_id), 999)
+            if hasattr(candidate_member, "roles"):
+                for r in candidate_member.roles:
+                    for idx, (h_id, _) in enumerate(STAFF_HIERARCHY):
+                        if r.id == h_id and idx > target_idx:
+                            roles_to_remove.append(r)
 
-        await db.log_security_event(
-            guild.id,
-            candidate_member.id,
-            "STAFF_HIRED",
-            f"Аттестация сдана куратору {self.invoker.display_name}. Назначена должность {target_role_name} (MC: {final_nick}, LP: {new_lp_group})",
-        )
+            role_warning = None
+            bot_member = guild.me
+            if not bot_member.guild_permissions.manage_roles:
+                role_warning = "У бота нет права 'Управление ролями' (Manage Roles)!"
+                logger.error(f"Cannot assign roles for {candidate_member.id}: Bot lacks manage_roles permission")
+            elif any(r >= bot_member.top_role for r in roles_to_add):
+                role_warning = f"Роль бота ({bot_member.top_role.name}) находится ниже назначаемой роли персонала в иерархии Discord!"
+                logger.error(f"Cannot assign roles for {candidate_member.id}: Role hierarchy issue ({role_warning})")
+            else:
+                try:
+                    if hasattr(candidate_member, "remove_roles") and roles_to_remove:
+                        await candidate_member.remove_roles(*roles_to_remove, reason=f"Аттестация сдана: повышение до {target_role_name}")
+                    if hasattr(candidate_member, "add_roles") and roles_to_add:
+                        await candidate_member.add_roles(*roles_to_add, reason=f"Аттестация сдана: назначение {target_role_name}")
+                except Exception as e:
+                    logger.error(f"Error updating Discord roles for candidate {candidate_member.id}: {e}")
+                    role_warning = f"Ошибка Discord при выдаче ролей: {e}"
 
-        # 6. Send DM to Candidate
-        try:
-            pass_embed = attestation_result_dm_embed(
-                candidate=candidate_member,
-                curator=self.invoker,
-                target_role_name=target_role_name,
-                status="PASSED",
-                reason=comment,
+            # 4. Sync LuckPerms Minecraft group
+            new_lp_group = ROLE_ID_TO_MC_GROUP.get(target_role_id, "intern")
+            staff_cog = self.cog or self.bot.get_cog("Staff")
+            if staff_cog and hasattr(staff_cog, "_dispatch_mc_command"):
+                await staff_cog._dispatch_mc_command(guild, f"lp user {final_nick} parent add {new_lp_group}")
+
+            # 5. Save Staff Member into Database (staff_stats, admins table & security log)
+            daily_norm_sec = int(STAFF_ROLE_DAILY_NORM_HOURS.get(target_role_id, DEFAULT_DAILY_NORM_HOURS) * 3600)
+            existing_by_nick = await db.get_staff_stats(guild.id, 0, fallback_nicks=[final_nick])
+            on_sec = existing_by_nick.get("online_seconds", 0) if existing_by_nick else 0
+            w_iss = existing_by_nick.get("warns_issued", 0) if existing_by_nick else 0
+            b_iss = existing_by_nick.get("bans_issued", 0) if existing_by_nick else 0
+            r_acc = existing_by_nick.get("reports_accepted", 0) if existing_by_nick else 0
+            m_iss = existing_by_nick.get("mutes_issued", 0) if existing_by_nick else 0
+
+            await db.upsert_staff_stats(
+                guild_id=guild.id,
+                user_id=candidate_member.id,
+                minecraft_nick=final_nick,
+                primary_group=new_lp_group,
+                online_seconds=on_sec,
+                norm_seconds=daily_norm_sec,
+                warns_issued=w_iss,
+                bans_issued=b_iss,
+                reports_accepted=r_acc,
+                mutes_issued=m_iss,
             )
-            await candidate_member.send(embed=pass_embed)
-        except Exception:
-            pass
 
-        # 7. Post to Curators Audit Channel
-        try:
-            audit_details = (
-                f"MC Ник: `{final_nick}`\n"
-                f"LP Группа: `{new_lp_group}`\n"
-                f"Отзыв: {comment or 'Без замечаний'}"
+            await db.add_admin(
+                guild_id=guild.id,
+                user_id=candidate_member.id,
+                added_by=self.invoker.id,
+                title=target_role_name,
+            )
+
+            await db.log_security_event(
+                guild.id,
+                candidate_member.id,
+                "STAFF_HIRED",
+                f"Аттестация сдана куратору {self.invoker.display_name}. Назначена должность {target_role_name} (MC: {final_nick}, LP: {new_lp_group})",
+            )
+
+            # 6. Send DM to Candidate
+            try:
+                pass_embed = attestation_result_dm_embed(
+                    candidate=candidate_member,
+                    curator=self.invoker,
+                    target_role_name=target_role_name,
+                    status="PASSED",
+                    reason=comment,
+                )
+                await candidate_member.send(embed=pass_embed)
+            except Exception:
+                pass
+
+            # 7. Post to Curators Audit Channel
+            try:
+                audit_details = (
+                    f"MC Ник: `{final_nick}`\n"
+                    f"LP Группа: `{new_lp_group}`\n"
+                    f"Отзыв: {comment or 'Без замечаний'}"
+                )
+                if role_warning:
+                    audit_details += f"\n⚠️ **Внимание Discord:** {role_warning}"
+
+                audit_embed = attestation_audit_embed(
+                    action_title="🎉 АТТЕСТАЦИЯ УСПЕШНО СДАНА",
+                    candidate=candidate_member,
+                    curator=self.invoker,
+                    target_role_name=target_role_name,
+                    voice_channel=guild.get_channel(voice_id),
+                    scheduled_dt=None,
+                    status_text="PASSED (Сдана)",
+                    color=COLOR_SUCCESS,
+                    details=audit_details,
+                )
+                await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+            except Exception as e:
+                logger.error(f"Failed to post pass audit: {e}")
+
+            success_desc = (
+                f"Сотрудник {candidate_member.mention} успешно аттестован!\n\n"
+                f"🏷️ **Должность:** **{target_role_name}**\n"
+                f"🎮 **Minecraft Ник:** `{final_nick}`\n"
+                f"⚡ **LuckPerms:** `lp user {final_nick} parent add {new_lp_group}`\n"
+                f"🛡️ **Временные права:** аннулированы из войса."
             )
             if role_warning:
-                audit_details += f"\n⚠️ **Внимание Discord:** {role_warning}"
+                success_desc += f"\n\n⚠️ **Внимание:** {role_warning}\n*Пожалуйста, выдайте роль `{target_role_name}` вручную в Discord или поднимите роль бота выше.*"
 
-            audit_embed = attestation_audit_embed(
-                action_title="🎉 АТТЕСТАЦИЯ УСПЕШНО СДАНА",
-                candidate=candidate_member,
-                curator=self.invoker,
-                target_role_name=target_role_name,
-                voice_channel=guild.get_channel(voice_id),
-                scheduled_dt=None,
-                status_text="PASSED (Сдана)",
-                color=COLOR_SUCCESS,
-                details=audit_details,
+            success_embed = _create_design_embed(
+                title="🎉 АТТЕСТАЦИЯ УСПЕШНО ПРИНЯТА",
+                description=success_desc,
+                color=COLOR_SUCCESS if not role_warning else COLOR_WARNING,
             )
-            await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+            await interaction.followup.send(embed=success_embed, ephemeral=True)
         except Exception as e:
-            logger.error(f"Failed to post pass audit: {e}")
-
-        success_desc = (
-            f"Сотрудник {candidate_member.mention} успешно аттестован!\n\n"
-            f"🏷️ **Должность:** **{target_role_name}**\n"
-            f"🎮 **Minecraft Ник:** `{final_nick}`\n"
-            f"⚡ **LuckPerms:** `lp user {final_nick} parent add {new_lp_group}`\n"
-            f"🛡️ **Временные права:** аннулированы из войса."
-        )
-        if role_warning:
-            success_desc += f"\n\n⚠️ **Внимание:** {role_warning}\n*Пожалуйста, выдайте роль `{target_role_name}` вручную в Discord или поднимите роль бота выше.*"
-
-        success_embed = _create_design_embed(
-            title="🎉 АТТЕСТАЦИЯ УСПЕШНО ПРИНЯТА",
-            description=success_desc,
-            color=COLOR_SUCCESS if not role_warning else COLOR_WARNING,
-        )
-        await interaction.followup.send(embed=success_embed, ephemeral=True)
+            logger.error(f"Error handling attestation pass modal: {e}", exc_info=True)
+            await interaction.followup.send(
+                f"❌ **Произошла ошибка при фиксации сдачи аттестации:**\n`{e}`",
+                ephemeral=True,
+            )
 
 
 class AttestationFailModal(discord.ui.Modal, title="❌ Фиксация провала аттестации"):
@@ -901,91 +925,105 @@ class AttestationFailModal(discord.ui.Modal, title="❌ Фиксация про�
         self.add_item(self.reason_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
-        guild = interaction.guild
-        att_id = int(self.attestation["id"])
-        target_role_name = self.attestation["target_role_name"]
-        voice_id = int(self.attestation["voice_channel_id"])
-        reason = self.reason_input.value.strip()
+        try:
+            guild = interaction.guild
+            att_id = int(self.attestation["id"])
+            target_role_name = self.attestation["target_role_name"]
+            voice_id = int(self.attestation["voice_channel_id"])
+            reason = self.reason_input.value.strip()
 
-        # 1. Update attestation record
-        await db.set_attestation_result(att_id, "FAILED", reason)
-
-        # 2. Revoke voice access
-        await revoke_attestation_voice_access(guild, voice_id, self.candidate)
-
-        # 3. Record fail in candidate history (3-Strike Rule)
-        fails_cnt, is_blacklisted, bl_until_iso = await db.record_candidate_fail(
-            guild_id=guild.id,
-            candidate_id=self.candidate.id,
-            reason=reason,
-            max_fails=ATTESTATION_MAX_FAILS,
-            cooldown_days=ATTESTATION_COOLDOWN_DAYS,
-        )
-
-        bl_str = None
-        if bl_until_iso:
+            # Remove verdict buttons
             try:
-                bl_dt = datetime.fromisoformat(bl_until_iso)
-                bl_str = format_msk(bl_dt)
+                if interaction.message:
+                    await interaction.message.edit(view=None)
             except Exception:
-                bl_str = bl_until_iso
+                pass
 
-        # 4. Notify Candidate in DM
-        try:
-            fail_embed = attestation_result_dm_embed(
-                candidate=self.candidate,
-                curator=self.invoker,
-                target_role_name=target_role_name,
-                status="FAILED",
+            # 1. Update attestation record
+            await db.set_attestation_result(att_id, "FAILED", reason)
+
+            # 2. Revoke voice access
+            await revoke_attestation_voice_access(guild, voice_id, self.candidate)
+
+            # 3. Record fail in candidate history (3-Strike Rule)
+            fails_cnt, is_blacklisted, bl_until_iso = await db.record_candidate_fail(
+                guild_id=guild.id,
+                candidate_id=self.candidate.id,
                 reason=reason,
-                consecutive_fails=fails_cnt,
-                is_blacklisted=is_blacklisted,
-                blacklisted_until_str=bl_str,
+                max_fails=ATTESTATION_MAX_FAILS,
+                cooldown_days=ATTESTATION_COOLDOWN_DAYS,
             )
-            await self.candidate.send(embed=fail_embed)
-        except Exception:
-            pass
 
-        # 5. Curators Audit Log
-        try:
-            details_text = f"Неудачных попыток подряд: {fails_cnt}/{ATTESTATION_MAX_FAILS}\nПричина: {reason}"
+            bl_str = None
+            if bl_until_iso:
+                try:
+                    bl_dt = datetime.fromisoformat(bl_until_iso)
+                    bl_str = format_msk(bl_dt)
+                except Exception:
+                    bl_str = bl_until_iso
+
+            # 4. Notify Candidate in DM
+            try:
+                fail_embed = attestation_result_dm_embed(
+                    candidate=self.candidate,
+                    curator=self.invoker,
+                    target_role_name=target_role_name,
+                    status="FAILED",
+                    reason=reason,
+                    consecutive_fails=fails_cnt,
+                    is_blacklisted=is_blacklisted,
+                    blacklisted_until_str=bl_str,
+                )
+                await self.candidate.send(embed=fail_embed)
+            except Exception:
+                pass
+
+            # 5. Curators Audit Log
+            try:
+                details_text = f"Неудачных попыток подряд: {fails_cnt}/{ATTESTATION_MAX_FAILS}\nПричина: {reason}"
+                if is_blacklisted:
+                    details_text += f"\n🚨 **КАНДИДАТ В ЧС НА 1 МЕСЯЦ** (до {bl_str})"
+
+                audit_embed = attestation_audit_embed(
+                    action_title="❌ АТТЕСТАЦИЯ ПРОВАЛЕНА",
+                    candidate=self.candidate,
+                    curator=self.invoker,
+                    target_role_name=target_role_name,
+                    voice_channel=guild.get_channel(voice_id),
+                    scheduled_dt=None,
+                    status_text="FAILED (Провалена)",
+                    color=COLOR_DANGER,
+                    details=details_text,
+                )
+                await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+            except Exception as e:
+                logger.error(f"Failed to post fail audit: {e}")
+
+            res_desc = (
+                f"Аттестация для {self.candidate.mention} помечена как **проваленная**.\n\n"
+                f"📊 **Счетчик неудач подряд:** `{fails_cnt}` из `{ATTESTATION_MAX_FAILS}`\n"
+                f"📝 **Причина:** `{reason}`\n"
+            )
             if is_blacklisted:
-                details_text += f"\n🚨 **КАНДИДАТ В ЧС НА 1 МЕСЯЦ** (до {bl_str})"
+                res_desc += (
+                    f"\n🚫 **ВНИМАНИЕ:** Кандидат накопил 3 неудачи подряд и автоматически заблокирован "
+                    f"для новых аттестаций **на 1 месяц** (до `{bl_str}`)."
+                )
 
-            audit_embed = attestation_audit_embed(
-                action_title="❌ АТТЕСТАЦИЯ ПРОВАЛЕНА",
-                candidate=self.candidate,
-                curator=self.invoker,
-                target_role_name=target_role_name,
-                voice_channel=guild.get_channel(voice_id),
-                scheduled_dt=None,
-                status_text="FAILED (Провалена)",
+            resp_embed = _create_design_embed(
+                title="❌ ВЕРДИКТ: АТТЕСТАЦИЯ ПРОВАЛЕНА",
+                description=res_desc,
                 color=COLOR_DANGER,
-                details=details_text,
             )
-            await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+            await interaction.followup.send(embed=resp_embed, ephemeral=True)
         except Exception as e:
-            logger.error(f"Failed to post fail audit: {e}")
-
-        res_desc = (
-            f"Аттестация для {self.candidate.mention} помечена как **проваленная**.\n\n"
-            f"📊 **Счетчик неудач подряд:** `{fails_cnt}` из `{ATTESTATION_MAX_FAILS}`\n"
-            f"📝 **Причина:** `{reason}`\n"
-        )
-        if is_blacklisted:
-            res_desc += (
-                f"\n🚫 **ВНИМАНИЕ:** Кандидат накопил 3 неудачи подряд и автоматически заблокирован "
-                f"для новых аттестаций **на 1 месяц** (до `{bl_str}`)."
+            logger.error(f"Error handling attestation fail modal: {e}", exc_info=True)
+            await interaction.followup.send(
+                f"❌ **Произошла ошибка при фиксации провала аттестации:**\n`{e}`",
+                ephemeral=True,
             )
-
-        resp_embed = _create_design_embed(
-            title="❌ ВЕРДИКТ: АТТЕСТАЦИЯ ПРОВАЛЕНА",
-            description=res_desc,
-            color=COLOR_DANGER,
-        )
-        await interaction.followup.send(embed=resp_embed, ephemeral=True)
 
 
 class AttestationSkipModal(discord.ui.Modal, title="⚠️ Фиксация пропуска аттестации"):
@@ -1016,87 +1054,101 @@ class AttestationSkipModal(discord.ui.Modal, title="⚠️ Фиксация пр
         self.add_item(self.reason_input)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
-        guild = interaction.guild
-        att_id = int(self.attestation["id"])
-        target_role_name = self.attestation["target_role_name"]
-        voice_id = int(self.attestation["voice_channel_id"])
-        reason = self.reason_input.value.strip()
+        try:
+            guild = interaction.guild
+            att_id = int(self.attestation["id"])
+            target_role_name = self.attestation["target_role_name"]
+            voice_id = int(self.attestation["voice_channel_id"])
+            reason = self.reason_input.value.strip()
 
-        # 1. Update attestation record
-        await db.set_attestation_result(att_id, "SKIPPED", reason)
-
-        # 2. Revoke voice access
-        await revoke_attestation_voice_access(guild, voice_id, self.candidate)
-
-        # 3. Record fail in candidate history (3-Strike Rule)
-        fails_cnt, is_blacklisted, bl_until_iso = await db.record_candidate_fail(
-            guild_id=guild.id,
-            candidate_id=self.candidate.id,
-            reason=reason,
-            max_fails=ATTESTATION_MAX_FAILS,
-            cooldown_days=ATTESTATION_COOLDOWN_DAYS,
-        )
-
-        bl_str = None
-        if bl_until_iso:
+            # Remove verdict buttons
             try:
-                bl_dt = datetime.fromisoformat(bl_until_iso)
-                bl_str = format_msk(bl_dt)
+                if interaction.message:
+                    await interaction.message.edit(view=None)
             except Exception:
-                bl_str = bl_until_iso
+                pass
 
-        # 4. Notify Candidate in DM
-        try:
-            skip_embed = attestation_result_dm_embed(
-                candidate=self.candidate,
-                curator=self.invoker,
-                target_role_name=target_role_name,
-                status="SKIPPED",
+            # 1. Update attestation record
+            await db.set_attestation_result(att_id, "SKIPPED", reason)
+
+            # 2. Revoke voice access
+            await revoke_attestation_voice_access(guild, voice_id, self.candidate)
+
+            # 3. Record fail in candidate history (3-Strike Rule)
+            fails_cnt, is_blacklisted, bl_until_iso = await db.record_candidate_fail(
+                guild_id=guild.id,
+                candidate_id=self.candidate.id,
                 reason=reason,
-                consecutive_fails=fails_cnt,
-                is_blacklisted=is_blacklisted,
-                blacklisted_until_str=bl_str,
+                max_fails=ATTESTATION_MAX_FAILS,
+                cooldown_days=ATTESTATION_COOLDOWN_DAYS,
             )
-            await self.candidate.send(embed=skip_embed)
-        except Exception:
-            pass
 
-        # 5. Audit Log
-        try:
-            audit_embed = attestation_audit_embed(
-                action_title="⚠️ АТТЕСТАЦИЯ ПРОПУЩЕНА (НЕЯВКА)",
-                candidate=self.candidate,
-                curator=self.invoker,
-                target_role_name=target_role_name,
-                voice_channel=guild.get_channel(voice_id),
-                scheduled_dt=None,
-                status_text="SKIPPED (Пропущена)",
+            bl_str = None
+            if bl_until_iso:
+                try:
+                    bl_dt = datetime.fromisoformat(bl_until_iso)
+                    bl_str = format_msk(bl_dt)
+                except Exception:
+                    bl_str = bl_until_iso
+
+            # 4. Notify Candidate in DM
+            try:
+                skip_embed = attestation_result_dm_embed(
+                    candidate=self.candidate,
+                    curator=self.invoker,
+                    target_role_name=target_role_name,
+                    status="SKIPPED",
+                    reason=reason,
+                    consecutive_fails=fails_cnt,
+                    is_blacklisted=is_blacklisted,
+                    blacklisted_until_str=bl_str,
+                )
+                await self.candidate.send(embed=skip_embed)
+            except Exception:
+                pass
+
+            # 5. Audit Log
+            try:
+                audit_embed = attestation_audit_embed(
+                    action_title="⚠️ АТТЕСТАЦИЯ ПРОПУЩЕНА (НЕЯВКА)",
+                    candidate=self.candidate,
+                    curator=self.invoker,
+                    target_role_name=target_role_name,
+                    voice_channel=guild.get_channel(voice_id),
+                    scheduled_dt=None,
+                    status_text="SKIPPED (Пропущена)",
+                    color=COLOR_WARNING,
+                    details=f"Неудачных попыток подряд: {fails_cnt}/{ATTESTATION_MAX_FAILS}\nПричина: {reason}",
+                )
+                await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+            except Exception as e:
+                logger.error(f"Failed to post skip audit: {e}")
+
+            res_desc = (
+                f"Зафиксирована неявка {self.candidate.mention} на аттестацию.\n\n"
+                f"📊 **Счетчик неудач подряд:** `{fails_cnt}` из `{ATTESTATION_MAX_FAILS}`\n"
+                f"📌 **Причина:** `{reason}`\n"
+            )
+            if is_blacklisted:
+                res_desc += (
+                    f"\n🚫 **ВНИМАНИЕ:** Кандидат накопил 3 пропуска подряд и заблокирован "
+                    f"для аттестаций **на 1 месяц** (до `{bl_str}`)."
+                )
+
+            resp_embed = _create_design_embed(
+                title="⚠️ ВЕРДИКТ: АТТЕСТАЦИЯ ПРОПУЩЕНА",
+                description=res_desc,
                 color=COLOR_WARNING,
-                details=f"Неудачных попыток подряд: {fails_cnt}/{ATTESTATION_MAX_FAILS}\nПричина: {reason}",
             )
-            await self.bot.send_channel_log(guild, CURATORS_AUDIT_CHANNEL_ID, audit_embed)
+            await interaction.followup.send(embed=resp_embed, ephemeral=True)
         except Exception as e:
-            logger.error(f"Failed to post skip audit: {e}")
-
-        res_desc = (
-            f"Зафиксирована неявка {self.candidate.mention} на аттестацию.\n\n"
-            f"📊 **Счетчик неудач подряд:** `{fails_cnt}` из `{ATTESTATION_MAX_FAILS}`\n"
-            f"📌 **Причина:** `{reason}`\n"
-        )
-        if is_blacklisted:
-            res_desc += (
-                f"\n🚫 **ВНИМАНИЕ:** Кандидат накопил 3 пропуска подряд и заблокирован "
-                f"для аттестаций **на 1 месяц** (до `{bl_str}`)."
+            logger.error(f"Error handling attestation skip modal: {e}", exc_info=True)
+            await interaction.followup.send(
+                f"❌ **Произошла ошибка при фиксации пропуска аттестации:**\n`{e}`",
+                ephemeral=True,
             )
-
-        resp_embed = _create_design_embed(
-            title="⚠️ ВЕРДИКТ: АТТЕСТАЦИЯ ПРОПУЩЕНА",
-            description=res_desc,
-            color=COLOR_WARNING,
-        )
-        await interaction.followup.send(embed=resp_embed, ephemeral=True)
 
 
 # =========================================================================
