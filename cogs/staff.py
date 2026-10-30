@@ -860,9 +860,10 @@ class FireConfirmView(discord.ui.View):
             for grp in set(ROLE_ID_TO_MC_GROUP.values()):
                 await self.cog._dispatch_mc_command(guild, f"lp user {self.mc_nick} parent remove {grp}")
 
-        # Update database: remove admin and clear primary_group
+        # Update database: remove admin, wipe staff stats, archive candidate attestations
         await db.remove_admin(guild.id, self.target.id)
-        await db.upsert_staff_stats(guild.id, self.target.id, primary_group="")
+        await db.remove_staff_stats(guild.id, self.target.id)
+        await db.archive_candidate_attestations(guild.id, self.target.id)
         await db.log_security_event(guild.id, self.target.id, "STAFF_FIRED", f"Снят со стаффа куратором {self.invoker.display_name}: {self.reason_text}")
 
         # Send DM notification
@@ -3116,17 +3117,6 @@ class StaffCog(commands.Cog, name="Staff"):
                         target_idx = found_idx
                         max_warns = TRAINEE_MAX_WARNS if r_id == TRAINEE_ROLE_ID else DEFAULT_STAFF_MAX_WARNS
                         role_norm_seconds = int(STAFF_ROLE_DAILY_NORM_HOURS.get(r_id, 3.0) * 3600)
-                else:
-                    # Check if candidate passed attestation in DB
-                    passed_att = await db.get_latest_passed_attestation(interaction.guild.id, target.id)
-                    if passed_att:
-                        att_role_id = int(passed_att.get("target_role_id", 0))
-                        att_role_name = passed_att.get("target_role_name", "Стажер")
-                        found_idx = next((idx for idx, (r_id, _) in enumerate(STAFF_HIERARCHY) if r_id == att_role_id), 7)
-                        rank_name = att_role_name
-                        target_idx = found_idx
-                        max_warns = TRAINEE_MAX_WARNS if att_role_id == TRAINEE_ROLE_ID else DEFAULT_STAFF_MAX_WARNS
-                        role_norm_seconds = int(STAFF_ROLE_DAILY_NORM_HOURS.get(att_role_id, 3.0) * 3600)
 
             is_staff = (not target.bot) and (rank_name != "Участник") and (target_idx < 100)
             is_trainee = is_staff and ((rank_name == "Стажер") or (target_idx == 7) or (max_warns == TRAINEE_MAX_WARNS))

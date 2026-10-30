@@ -582,6 +582,30 @@ class Database:
             await db.commit()
             return True
 
+    async def remove_staff_stats(self, guild_id: int, user_id: int) -> bool:
+        """Deletes staff stats record upon firing/removal from staff."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "DELETE FROM staff_stats WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id)
+            )
+            await db.execute(
+                "UPDATE staff_stats_by_nick SET user_id = 0, primary_group = '' WHERE guild_id = ? AND user_id = ?",
+                (guild_id, user_id)
+            )
+            await db.commit()
+            return True
+
+    async def archive_candidate_attestations(self, guild_id: int, candidate_id: int) -> bool:
+        """Marks any previous attestations as ARCHIVED_FIRED so they do not restore rank after firing."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE attestations SET status = 'ARCHIVED_FIRED' WHERE guild_id = ? AND candidate_id = ?",
+                (guild_id, candidate_id)
+            )
+            await db.commit()
+            return True
+
     # --- SNAPSHOTS (CHANNELS & ROLES RESTORE) ---
     async def save_snapshot(self, snapshot_id: str, guild_id: int, created_by: int, data: dict) -> bool:
         async with aiosqlite.connect(self.db_path) as db:
